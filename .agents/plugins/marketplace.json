@@ -1,0 +1,21 @@
+{
+  "name": "process-model-generator",
+  "interface": {
+    "displayName": "Process Model Generator"
+  },
+  "plugins": [
+    {
+      "name": "process-model-generator",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/mssoftjp/process-model-generator.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

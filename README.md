@@ -39,7 +39,7 @@ The canonical plugin manifest is [.codex-plugin/plugin.json](.codex-plugin/plugi
 
 After [installing](#installation) the plugin or standalone skill, prompt the agent with business context in natural language.
 
-### 1. Using with AI (Codex / ChatGPT)
+### Using with AI (Codex / ChatGPT)
 
 ```text
 Using $process-model-generator, create a grounded swimlane diagram from this business workflow:
@@ -50,32 +50,6 @@ Workflow:
 ```
 
 The AI extracts the logical structure, converts it to the internal intermediate representation (`.flow`), and generates an SVG with compiler diagnostics.
-
-### 2. Using the CLI (Local Rendering & Evaluation)
-
-Use the bundled compiler to render SVGs from intermediate files, evaluate delivery readiness, or convert BPMN XML:
-
-```bash
-# Standard preview generation
-node skills/process-model-generator/scripts/process-model-generator.mjs inputs/flow/process.flow -o outputs/preview/process.svg
-
-# Strict delivery generation (fails without writing new SVG if errors occur)
-node skills/process-model-generator/scripts/process-model-generator.mjs inputs/flow/process.flow -o outputs/preview/process.svg --strict
-
-# Multi-view, regenerated SVG, and review ledger evaluation
-node skills/process-model-generator/scripts/process-model-generator.mjs eval --dir outputs/delivery --report outputs/delivery/review.md --parent overview-flow-id
-
-# Consulting evaluation (checks source attribution column and conflicting claims)
-node skills/process-model-generator/scripts/process-model-generator.mjs eval --dir outputs/delivery --report outputs/delivery/review.md --parent overview-flow-id --consulting
-
-# Convert existing BPMN XML to intermediate format
-python3 skills/process-model-generator/scripts/bpmn2flow.py input.bpmn output.flow "Source URL"
-python3 skills/process-model-generator/scripts/bpmn2flow.py input.bpmn output.flow "Source URL" --json-stats stats.json
-```
-
-`eval` verifies each distributed SVG against a strict re-compilation of the same version. It also verifies that diagnostic warnings are accounted for in a fixed-column review ledger, and that view boundaries, provisional marks (`?`), and parent `task(sub)` / child `flow` IDs match. `--consulting` fixes the ledger to `claim | kind | source | view:id | status | reason` (6 columns) and checks source locators and multi-source conflicting claims. **Successful compilation alone is never treated as proof of completion.**
-
-`--vertical` provides a vertical default for files without an explicit orientation declaration. The DSL's `orientation` declaration takes precedence as the authoritative source of truth; specify `orientation vertical` in the `.flow` file to pin the orientation.
 
 ---
 
@@ -90,7 +64,13 @@ Each release provides two distribution ZIP packages. Both bundle the pre-built c
 
 ### Codex Plugin
 
-Marketplace registration is pending. Installation commands will be added after an official marketplace identifier is published; until then, use the standalone Skill package below.
+Add this GitHub repository as a Codex marketplace source:
+
+```bash
+codex plugin marketplace add mssoftjp/process-model-generator
+```
+
+Then run `/plugins` in Codex CLI, select **Process Model Generator**, and install it. Start a new Codex session before using the bundled skill.
 
 ### Standalone Skill
 

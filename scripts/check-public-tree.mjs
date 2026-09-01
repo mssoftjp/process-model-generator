@@ -15,7 +15,7 @@ const allowedFiles = new Set([
   'tools/render-original.py',
   'tsconfig.json',
 ]);
-const allowedPrefixes = ['.codex-plugin/', '.github/', 'docs/', 'scripts/', 'skills/', 'src/', 'test/'];
+const allowedPrefixes = ['.agents/', '.codex-plugin/', '.github/', 'docs/', 'scripts/', 'skills/', 'src/', 'test/'];
 
 function gitLines(args) {
   try {
