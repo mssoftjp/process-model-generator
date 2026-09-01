@@ -6573,7 +6573,7 @@ if (process.stderr.isTTY) {
 }
 var args = process.argv.slice(2);
 if (args.includes("--version")) {
-  print(process.stdout, "0.2.17");
+  print(process.stdout, "0.2.18");
   process.exit(0);
 }
 if (args[0] === "eval") {
@@ -6594,7 +6594,7 @@ if (args[0] === "eval") {
     reportPath,
     parentId,
     consulting,
-    version: "0.2.17"
+    version: "0.2.18"
   });
   for (const finding of result.findings) {
     const tag = finding.level === "error" ? "ERROR" : finding.level === "warning" ? "WARN " : "info ";
@@ -6620,7 +6620,7 @@ try {
   const result = compile(source, {
     strict,
     orientation: verticalDefault ? "vertical" : void 0,
-    version: "0.2.17"
+    version: "0.2.18"
   });
   for (const d of result.diagnostics) {
     const tag = d.level === "error" ? "ERROR" : d.level === "warning" ? "WARN " : "info ";
