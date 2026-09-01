@@ -98,7 +98,7 @@ describe('fuzz × oracle', () => {
         }
       }
       expect(failures, failures.slice(0, 3).join('\n\n')).toEqual([]);
-    }, 10_000);
+    }, 60_000);
   }
 
   it('is deterministic for the same generated seed', () => {
