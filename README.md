@@ -51,6 +51,14 @@ Workflow:
 
 The AI extracts the logical structure, converts it to the internal intermediate representation (`.flow`), and generates an SVG with compiler diagnostics.
 
+### Using the CLI
+
+Render a `.flow` file with the compiler bundled in the repository:
+
+```bash
+node skills/process-model-generator/scripts/process-model-generator.mjs inputs/flow/process.flow -o outputs/preview/process.svg --strict
+```
+
 ---
 
 ## Installation

@@ -41,3 +41,19 @@ Use `--json-stats` to report unconvertible elements by kind, id, name, and reaso
 - `W-440` reports that a 1600×900 presentation would make the generated SVG unsuitable as the only delivered view, including a time axis longer than two screens when fitting would shrink the text. Keep the complete `.flow`, but deliver an end-to-end overview and the necessary Level 2 diagrams.
 - `W-441` reports that the lane axis would become physically unreadable at that scale. Under `--strict` it becomes `E-441` and compilation stops before writing an SVG. The diagnostic is based on generated dimensions and orientation, never node count.
 - `O-*` diagnostics and `W-252` indicate engine failures rather than source-model ambiguity. If they appear while using an unchanged compiler, report them separately and do not hand-edit the SVG to hide them.
+
+## Delivery evaluation
+
+After placing all `.flow`, regenerated `.svg`, and review rows in one delivery directory, run:
+
+```bash
+node scripts/process-model-generator.mjs eval --dir outputs/delivery --report outputs/delivery/review.md --parent overview-flow-id
+```
+
+Add `--consulting` for the source-bearing ledger defined in the consulting workflow. Treat a nonzero result as incomplete; do not replace failed checks with prose.
+
+For audit-sensitive delivery, report each view's entry, exits, unresolved items, intentionally omitted evidence, one-way messages flagged by `W-236`, and the `N-440` fit, lane, time, and crossing figures.
+
+Write each ordinary view row as `view-index | view | flow-id:* | modeled | entry=id,...; exits=id,...`. Add a `diagnostic` row addressed to `flow-id:W-nnn` for every warning, and a row addressed to `flow-id:node-id` or `flow-id:from->to` for every provisional `?`. A child normally matches a parent `task(sub)` ID. A separately triggered or time-discontinuous child instead needs an `independent-trigger | view` row and `view-plan boundary=trigger` or `time`; do not use that exception to bypass a missing parent reference.
+
+`W-440` requires an end-to-end overview plus the Level 2 views justified by a supported business boundary; otherwise `eval` reports `E-517`. Keep overview tasks at phase or subprocess level, use matching parent and child flow IDs, and apply the same rule recursively when a detail view is also oversized. Never auto-split by node count or deliver one unreadable SVG merely because lax compilation succeeded.
