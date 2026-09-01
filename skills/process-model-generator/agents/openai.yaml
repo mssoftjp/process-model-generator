@@ -1,0 +1,4 @@
+interface:
+  display_name: "Process Model Generator"
+  short_description: "Model defensible workflows from business descriptions"
+  default_prompt: "Use $process-model-generator to turn this business description into a semantically supported, validated process model."

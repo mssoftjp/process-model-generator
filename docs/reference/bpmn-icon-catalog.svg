@@ -1,0 +1,578 @@
+<svg xmlns="http://www.w3.org/2000/svg" data-process-model-generator="0.2.15" width="498" height="6492" viewBox="0 0 498 6492" font-family="'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP','Yu Gothic',Meiryo,sans-serif">
+<rect width="498" height="6492" fill="#ffffff"/>
+<text x="24" y="42" font-size="16" fill="#18181b" text-anchor="start" dominant-baseline="central" font-weight="600">BPMN icon catalog</text>
+<g id="layer-band">
+<g id="lane-Start_Events">
+<rect x="24" y="68" width="34" height="580" fill="#ececef"/>
+<rect x="24" y="68" width="450" height="580" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="358" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 358)">Start Events</text>
+</g>
+<g id="lane-Intermediate_Catch_Events">
+<rect x="24" y="648" width="450" height="580" fill="#fafafa"/>
+<rect x="24" y="648" width="34" height="580" fill="#ececef"/>
+<rect x="24" y="648" width="450" height="580" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="938" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 938)">Intermediate Catch Events</text>
+</g>
+<g id="lane-Intermediate_Throw_Events">
+<rect x="24" y="1228" width="34" height="580" fill="#ececef"/>
+<rect x="24" y="1228" width="450" height="580" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="1518" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 1518)">Intermediate Throw Events</text>
+</g>
+<g id="lane-End_Events">
+<rect x="24" y="1808" width="450" height="660" fill="#fafafa"/>
+<rect x="24" y="1808" width="34" height="660" fill="#ececef"/>
+<rect x="24" y="1808" width="450" height="660" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="2138" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 2138)">End Events</text>
+</g>
+<g id="lane-Gateways">
+<rect x="24" y="2468" width="34" height="548" fill="#ececef"/>
+<rect x="24" y="2468" width="450" height="548" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="2742" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 2742)">Gateways</text>
+</g>
+<g id="lane-Tasks">
+<rect x="24" y="3016" width="450" height="660" fill="#fafafa"/>
+<rect x="24" y="3016" width="34" height="660" fill="#ececef"/>
+<rect x="24" y="3016" width="450" height="660" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="3346" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 3346)">Tasks</text>
+</g>
+<g id="lane-Activities">
+<rect x="24" y="3676" width="34" height="932" fill="#ececef"/>
+<rect x="24" y="3676" width="450" height="932" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="4142" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 4142)">Activities</text>
+</g>
+<g id="lane-Boundary_Events">
+<rect x="24" y="4608" width="450" height="276" fill="#fafafa"/>
+<rect x="24" y="4608" width="34" height="276" fill="#ececef"/>
+<rect x="24" y="4608" width="450" height="276" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="4746" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 4746)">Boundary Events</text>
+</g>
+<g id="lane-Data_and_Artifacts">
+<rect x="24" y="4884" width="34" height="684" fill="#ececef"/>
+<rect x="24" y="4884" width="450" height="684" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="5226" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 5226)">Data and Artifacts</text>
+</g>
+<g id="lane-Flow_Markers">
+<rect x="24" y="5568" width="450" height="900" fill="#fafafa"/>
+<rect x="24" y="5568" width="34" height="900" fill="#ececef"/>
+<rect x="24" y="5568" width="450" height="900" fill="none" stroke="#c9c9cf" stroke-width="1"/>
+<text x="41" y="6018" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 41 6018)">Flow Markers</text>
+</g>
+</g>
+<g id="layer-edges">
+<g id="edge-e0_flow_a_flow_b">
+<path d="M 250 5626 L 353 5626" fill="none" stroke="#52525b" stroke-width="1.3" data-edge-conditional="true"/>
+<path d="M 362 5626 L 353 5622.5 L 353 5629.5 Z" fill="#52525b"/>
+<path data-conditional-diamond="true" d="M 261 5626 L 257 5630 L 253 5626 L 257 5622 Z" fill="#ffffff" stroke="#52525b" stroke-width="1.1"/>
+<text x="256" y="5616.5" font-size="11" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3">Sequence</text>
+</g>
+<g id="edge-e1_flow_c_flow_d">
+<path d="M 250 5706 L 353 5706" fill="none" stroke="#52525b" stroke-width="1.3" data-edge-default="true"/>
+<path d="M 362 5706 L 353 5702.5 L 353 5709.5 Z" fill="#52525b"/>
+<path data-default-slash="true" d="M 258 5711 L 262 5701" fill="none" stroke="#52525b" stroke-width="1.4" stroke-linecap="round"/>
+</g>
+<g id="edge-e2_flow_e_flow_f">
+<path d="M 210 5814 L 210 5829" fill="none" stroke="#52525b" stroke-width="1.2" stroke-dasharray="2 4" stroke-linecap="round" data-assoc="data"/>
+<path d="M 206.5 5829 L 210 5838 L 213.5 5829" fill="none" stroke="#52525b" stroke-width="1.2" stroke-linecap="round"/>
+</g>
+<g id="edge-e3_flow_g_flow_h">
+<path d="M 210 5974 L 210 5998" fill="none" stroke="#52525b" stroke-width="1.2" stroke-dasharray="1 3" data-assoc="undirected"/>
+</g>
+<g id="edge-e4_flow_i_flow_j">
+<path d="M 210 6134 L 210 6149" fill="none" stroke="#52525b" stroke-width="1.2" stroke-dasharray="1 3" data-assoc="directed"/>
+<path d="M 206.5 6149 L 210 6158 L 213.5 6149" fill="none" stroke="#52525b" stroke-width="1.2" stroke-linecap="round"/>
+</g>
+<g id="edge-e5_flow_k_flow_l">
+<path d="M 210 6294 L 210 6309" fill="none" stroke="#52525b" stroke-width="1.2" stroke-dasharray="1 3" data-assoc="both"/>
+<path d="M 206.5 6309 L 210 6318 L 213.5 6309" fill="none" stroke="#52525b" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M 206.5 6303 L 210 6294 L 213.5 6303" fill="none" stroke="#52525b" stroke-width="1.2" stroke-linecap="round"/>
+</g>
+<g id="edge-e6_flow_m_flow_n">
+<path d="M 250 6426 L 353 6426" fill="none" stroke="#52525b" stroke-width="1.3" data-edge-conditional="true"/>
+<path d="M 362 6426 L 353 6422.5 L 353 6429.5 Z" fill="#52525b"/>
+<path data-conditional-diamond="true" d="M 261 6426 L 257 6430 L 253 6426 L 257 6422 Z" fill="#ffffff" stroke="#52525b" stroke-width="1.1"/>
+<text x="256" y="6416.5" font-size="11" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3">Conditional</text>
+</g>
+</g>
+<g id="layer-nodes">
+<g id="node-start_none">
+<circle data-event-role="start" cx="210" cy="118" r="15.2" fill="#ffffff" stroke="#18181b" stroke-width="1.6"/>
+
+<text x="210" y="148" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="27.2" lengthAdjust="spacingAndGlyphs">None</text>
+</g>
+<g id="node-start_message">
+<circle data-event-role="start" cx="210" cy="198" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<rect data-event-marker="message" data-event-filled="false" x="203" y="193" width="14" height="10" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 203 193 L 210 199 L 217 193" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<text x="210" y="228" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="48.4" lengthAdjust="spacingAndGlyphs">Message</text>
+</g>
+<g id="node-start_timer">
+<circle data-event-role="start" cx="210" cy="278" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle data-event-marker="timer" data-event-filled="false" cx="210" cy="278" r="8" fill="none" stroke="#3f3f46" stroke-width="1.1"/><circle cx="210" cy="278" r="6.2" fill="none" stroke="#3f3f46" stroke-width="0.9"/><path d="M 210 278 L 210 273.8 M 210 278 L 213.2 279.6" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linecap="round"/>
+<text x="210" y="308" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="30.5" lengthAdjust="spacingAndGlyphs">Timer</text>
+</g>
+<g id="node-start_conditional">
+<circle data-event-role="start" cx="210" cy="358" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<rect data-event-marker="conditional" data-event-filled="false" x="205" y="351.5" width="10" height="13" rx="0.5" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 207 354.7 H 213 M 207 357.7 H 213 M 207 360.7 H 212" fill="none" stroke="#3f3f46" stroke-width="1"/>
+<text x="210" y="388" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="57.8" lengthAdjust="spacingAndGlyphs">Conditional</text>
+</g>
+<g id="node-start_signal">
+<circle data-event-role="start" cx="210" cy="438" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<path data-event-marker="signal" data-event-filled="false" d="M 210 430.8 L 216.4 443.2 L 203.6 443.2 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="468" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="33.0" lengthAdjust="spacingAndGlyphs">Signal</text>
+</g>
+<g id="node-start_multiple">
+<circle data-event-role="start" cx="210" cy="518" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<polygon data-event-marker="multiple" data-event-filled="false" points="210 511 216.65739561406608 515.8368810393754 214.11449676604732 523.6631189606246 205.88550323395268 523.6631189606246 203.34260438593392 515.8368810393754" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="548" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="40.8" lengthAdjust="spacingAndGlyphs">Multiple</text>
+</g>
+<g id="node-start_parallel">
+<circle data-event-role="start" cx="210" cy="598" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<path data-event-marker="parallelMultiple" data-event-filled="false" d="M 210 591.5 L 210 604.5 M 203.5 598 L 216.5 598" fill="none" stroke="#3f3f46" stroke-width="1.8" stroke-linecap="round"/>
+<text x="210" y="628" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="82.9" lengthAdjust="spacingAndGlyphs">Parallel multiple</text>
+</g>
+<g id="node-catch_message">
+<circle data-event-role="catch" cx="210" cy="698" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="698" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<rect data-event-marker="message" data-event-filled="false" x="203" y="693" width="14" height="10" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 203 693 L 210 699 L 217 693" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<text x="210" y="728" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="48.4" lengthAdjust="spacingAndGlyphs">Message</text>
+</g>
+<g id="node-catch_timer">
+<circle data-event-role="catch" cx="210" cy="778" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="778" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<circle data-event-marker="timer" data-event-filled="false" cx="210" cy="778" r="8" fill="none" stroke="#3f3f46" stroke-width="1.1"/><circle cx="210" cy="778" r="6.2" fill="none" stroke="#3f3f46" stroke-width="0.9"/><path d="M 210 778 L 210 773.8 M 210 778 L 213.2 779.6" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linecap="round"/>
+<text x="210" y="808" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="30.5" lengthAdjust="spacingAndGlyphs">Timer</text>
+</g>
+<g id="node-catch_conditional">
+<circle data-event-role="catch" cx="210" cy="858" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="858" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<rect data-event-marker="conditional" data-event-filled="false" x="205" y="851.5" width="10" height="13" rx="0.5" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 207 854.7 H 213 M 207 857.7 H 213 M 207 860.7 H 212" fill="none" stroke="#3f3f46" stroke-width="1"/>
+<text x="210" y="888" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="57.8" lengthAdjust="spacingAndGlyphs">Conditional</text>
+</g>
+<g id="node-catch_link">
+<circle data-event-role="catch" cx="210" cy="938" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="938" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="link" data-event-filled="false" d="M 203.6 935 L 210.6 935 L 210.6 932.4 L 217 938 L 210.6 943.6 L 210.6 941 L 203.6 941 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="968" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="23.8" lengthAdjust="spacingAndGlyphs">Link</text>
+</g>
+<g id="node-catch_signal">
+<circle data-event-role="catch" cx="210" cy="1018" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1018" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="signal" data-event-filled="false" d="M 210 1010.8 L 216.4 1023.2 L 203.6 1023.2 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1048" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="33.0" lengthAdjust="spacingAndGlyphs">Signal</text>
+</g>
+<g id="node-catch_multiple">
+<circle data-event-role="catch" cx="210" cy="1098" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1098" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<polygon data-event-marker="multiple" data-event-filled="false" points="210 1091 216.65739561406608 1095.8368810393754 214.11449676604732 1103.6631189606246 205.88550323395268 1103.6631189606246 203.34260438593392 1095.8368810393754" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1128" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="40.8" lengthAdjust="spacingAndGlyphs">Multiple</text>
+</g>
+<g id="node-catch_parallel">
+<circle data-event-role="catch" cx="210" cy="1178" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1178" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="parallelMultiple" data-event-filled="false" d="M 210 1171.5 L 210 1184.5 M 203.5 1178 L 216.5 1178" fill="none" stroke="#3f3f46" stroke-width="1.8" stroke-linecap="round"/>
+<text x="210" y="1208" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="82.9" lengthAdjust="spacingAndGlyphs">Parallel multiple</text>
+</g>
+<g id="node-throw_none">
+<circle data-event-role="throw" cx="210" cy="1278" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1278" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+
+<text x="210" y="1308" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="27.2" lengthAdjust="spacingAndGlyphs">None</text>
+</g>
+<g id="node-throw_message">
+<circle data-event-role="throw" cx="210" cy="1358" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1358" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<rect data-event-marker="message" data-event-filled="true" x="203" y="1353" width="14" height="10" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 203 1353 L 210 1359 L 217 1353" fill="none" stroke="#ffffff" stroke-width="1.1"/>
+<text x="210" y="1388" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="48.4" lengthAdjust="spacingAndGlyphs">Message</text>
+</g>
+<g id="node-throw_escalation">
+<circle data-event-role="throw" cx="210" cy="1438" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1438" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="escalation" data-event-filled="true" d="M 210 1430.8 L 215.6 1444.4 L 210 1440.4 L 204.4 1444.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1468" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="55.0" lengthAdjust="spacingAndGlyphs">Escalation</text>
+</g>
+<g id="node-throw_compensation">
+<circle data-event-role="throw" cx="210" cy="1518" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1518" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="compensation" data-event-filled="true" d="M 216.2 1512.6 L 209.8 1518 L 216.2 1523.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 210.4 1512.6 L 204 1518 L 210.4 1523.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1548" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="75.0" lengthAdjust="spacingAndGlyphs">Compensation</text>
+</g>
+<g id="node-throw_link">
+<circle data-event-role="throw" cx="210" cy="1598" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1598" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="link" data-event-filled="true" d="M 203.6 1595 L 210.6 1595 L 210.6 1592.4 L 217 1598 L 210.6 1603.6 L 210.6 1601 L 203.6 1601 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1628" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="23.8" lengthAdjust="spacingAndGlyphs">Link</text>
+</g>
+<g id="node-throw_signal">
+<circle data-event-role="throw" cx="210" cy="1678" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1678" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="signal" data-event-filled="true" d="M 210 1670.8 L 216.4 1683.2 L 203.6 1683.2 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1708" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="33.0" lengthAdjust="spacingAndGlyphs">Signal</text>
+</g>
+<g id="node-throw_multiple">
+<circle data-event-role="throw" cx="210" cy="1758" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="1758" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<polygon data-event-marker="multiple" data-event-filled="true" points="210 1751 216.65739561406608 1755.8368810393754 214.11449676604732 1763.6631189606246 205.88550323395268 1763.6631189606246 203.34260438593392 1755.8368810393754" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="1788" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="40.8" lengthAdjust="spacingAndGlyphs">Multiple</text>
+</g>
+<g id="node-end_none">
+<circle data-event-role="end" cx="210" cy="1858" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+
+<text x="210" y="1888" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="27.2" lengthAdjust="spacingAndGlyphs">None</text>
+</g>
+<g id="node-end_message">
+<circle data-event-role="end" cx="210" cy="1938" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<rect data-event-marker="message" data-event-filled="true" x="203" y="1933" width="14" height="10" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 203 1933 L 210 1939 L 217 1933" fill="none" stroke="#ffffff" stroke-width="1.1"/>
+<text x="210" y="1968" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="48.4" lengthAdjust="spacingAndGlyphs">Message</text>
+</g>
+<g id="node-end_error">
+<circle data-event-role="end" cx="210" cy="2018" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<path data-event-marker="error" data-event-filled="true" d="M 208.8 2010.8 L 214.2 2017.4 L 210.6 2017.4 L 212.4 2025.2 L 205.6 2018.4 L 209.8 2018.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="2048" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="23.2" lengthAdjust="spacingAndGlyphs">Error</text>
+</g>
+<g id="node-end_escalation">
+<circle data-event-role="end" cx="210" cy="2098" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<path data-event-marker="escalation" data-event-filled="true" d="M 210 2090.8 L 215.6 2104.4 L 210 2100.4 L 204.4 2104.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="2128" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="55.0" lengthAdjust="spacingAndGlyphs">Escalation</text>
+</g>
+<g id="node-end_compensation">
+<circle data-event-role="end" cx="210" cy="2178" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<path data-event-marker="compensation" data-event-filled="true" d="M 216.2 2172.6 L 209.8 2178 L 216.2 2183.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 210.4 2172.6 L 204 2178 L 210.4 2183.4 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="2208" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="75.0" lengthAdjust="spacingAndGlyphs">Compensation</text>
+</g>
+<g id="node-end_signal">
+<circle data-event-role="end" cx="210" cy="2258" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<path data-event-marker="signal" data-event-filled="true" d="M 210 2250.8 L 216.4 2263.2 L 203.6 2263.2 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="2288" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="33.0" lengthAdjust="spacingAndGlyphs">Signal</text>
+</g>
+<g id="node-end_terminate">
+<circle data-event-role="end" cx="210" cy="2338" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<circle data-event-marker="terminate" data-event-filled="true" cx="210" cy="2338" r="6.2" fill="#3f3f46" stroke="#3f3f46" data-event-inner="terminate"/>
+<text x="210" y="2368" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="52.4" lengthAdjust="spacingAndGlyphs">Terminate</text>
+</g>
+<g id="node-end_multiple">
+<circle data-event-role="end" cx="210" cy="2418" r="14.5" fill="#ffffff" stroke="#3f3f46" stroke-width="3"/>
+<polygon data-event-marker="multiple" data-event-filled="true" points="210 2411 216.65739561406608 2415.8368810393754 214.11449676604732 2423.6631189606246 205.88550323395268 2423.6631189606246 203.34260438593392 2415.8368810393754" fill="#3f3f46" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="2448" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="40.8" lengthAdjust="spacingAndGlyphs">Multiple</text>
+</g>
+<g id="node-gateway_xor">
+<path d="M 210 2520 L 232 2542 L 210 2564 L 188 2542 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path data-gateway-marker="exclusive" d="M 203 2535 L 217 2549 M 203 2549 L 217 2535" stroke="#3f3f46" stroke-width="2" stroke-linecap="round"/>
+<text x="202" y="2506" font-size="12" fill="#52525b" text-anchor="end" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="52.1" lengthAdjust="spacingAndGlyphs">Exclusive</text>
+</g>
+<g id="node-gateway_parallel">
+<path d="M 210 2608 L 232 2630 L 210 2652 L 188 2630 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path data-gateway-marker="parallel" d="M 210 2621 L 210 2639 M 201 2630 L 219 2630" stroke="#3f3f46" stroke-width="2" stroke-linecap="round"/>
+<text x="202" y="2594" font-size="12" fill="#52525b" text-anchor="end" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="38.8" lengthAdjust="spacingAndGlyphs">Parallel</text>
+</g>
+<g id="node-gateway_inclusive">
+<path d="M 210 2696 L 232 2718 L 210 2740 L 188 2718 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<circle data-gateway-marker="inclusive" cx="210" cy="2718" r="7.5" fill="none" stroke="#3f3f46" stroke-width="2.2"/>
+<text x="202" y="2682" font-size="12" fill="#52525b" text-anchor="end" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="46.8" lengthAdjust="spacingAndGlyphs">Inclusive</text>
+</g>
+<g id="node-gateway_event">
+<path d="M 210 2784 L 232 2806 L 210 2828 L 188 2806 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<circle data-gateway-marker="event" cx="210" cy="2806" r="8.5" fill="none" stroke="#3f3f46" stroke-width="1.1"/><circle cx="210" cy="2806" r="6.5" fill="none" stroke="#3f3f46" stroke-width="1.1"/><polygon points="210 2802 213.80422606518061 2804.7639320225003 212.35114100916988 2809.2360679774997 207.64885899083012 2809.2360679774997 206.19577393481939 2804.7639320225003" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<text x="202" y="2770" font-size="12" fill="#52525b" text-anchor="end" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="65.9" lengthAdjust="spacingAndGlyphs">Event-based</text>
+</g>
+<g id="node-gateway_parallel_event">
+<path d="M 210 2872 L 232 2894 L 210 2916 L 188 2894 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<circle data-gateway-marker="parallel-event" cx="210" cy="2894" r="8.5" fill="none" stroke="#3f3f46" stroke-width="1.1"/><circle cx="210" cy="2894" r="6.5" fill="none" stroke="#3f3f46" stroke-width="1.1"/><polygon points="210 2890 213.80422606518061 2892.7639320225003 212.35114100916988 2897.2360679774997 207.64885899083012 2897.2360679774997 206.19577393481939 2892.7639320225003" fill="none" stroke="#3f3f46" stroke-width="1.1"/><path d="M 210 2891.8 L 210 2896.2 M 207.8 2894 L 212.2 2894" stroke="#3f3f46" stroke-width="1.2" stroke-linecap="round"/>
+<text x="202" y="2858" font-size="12" fill="#52525b" text-anchor="end" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="106.2" lengthAdjust="spacingAndGlyphs">Parallel event-based</text>
+</g>
+<g id="node-gateway_complex">
+<path d="M 210 2960 L 232 2982 L 210 3004 L 188 2982 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path data-gateway-marker="complex" d="M 210 2974 L 210 2990 M 202 2982 L 218 2982 M 204.4 2976.4 L 215.6 2987.6 M 215.6 2976.4 L 204.4 2987.6" stroke="#3f3f46" stroke-width="1.6" stroke-linecap="round"/>
+<text x="202" y="2946" font-size="12" fill="#52525b" text-anchor="end" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="46.7" lengthAdjust="spacingAndGlyphs">Complex</text>
+</g>
+<g id="node-task_abstract">
+<rect x="170" y="3046" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="3074" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="49.3" lengthAdjust="spacingAndGlyphs">Abstract</text>
+</g>
+<g id="node-task_user">
+<rect x="170" y="3126" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="user"/>
+<circle data-task-marker="user" cx="180.5" cy="3134.4" r="2.3" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 176.6 3141.6 Q 180.5 3136.6 184.4 3141.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3160" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="27.7" lengthAdjust="spacingAndGlyphs">User</text>
+</g>
+<g id="node-task_service">
+<rect x="170" y="3206" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="service"/>
+<circle data-task-marker="service" cx="181" cy="3216" r="3.1" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 184.1 3216 L 186 3216 M 182.55 3218.6846787517316 L 183.5 3220.330127018922 M 179.45 3218.6846787517316 L 178.5 3220.330127018922 M 177.9 3216 L 176 3216 M 179.45 3213.3153212482684 L 178.5 3211.669872981078 M 182.55 3213.3153212482684 L 183.5 3211.669872981078 " stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3240" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="45.9" lengthAdjust="spacingAndGlyphs">Service</text>
+</g>
+<g id="node-task_rule">
+<rect x="154" y="3286" width="112" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="rule"/>
+<rect data-task-marker="rule" x="160" y="3292" width="11" height="8.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 160 3295 H 171 M 163.5 3295 V 3300.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3320" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="82.9" lengthAdjust="spacingAndGlyphs">Business rule</text>
+</g>
+<g id="node-task_script">
+<rect x="170" y="3366" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="script"/>
+<path data-task-marker="script" d="M 176 3373 H 186 M 176 3376 H 186 M 176 3379 H 183" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3400" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="34.4" lengthAdjust="spacingAndGlyphs">Script</text>
+</g>
+<g id="node-task_send">
+<rect x="170" y="3446" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="send"/>
+<rect data-task-marker="send" x="176" y="3452.5" width="12" height="8" fill="#3f3f46" stroke="#3f3f46" stroke-width="1"/><path d="M 176 3452.5 L 182 3457 L 188 3452.5" stroke="#ffffff" stroke-width="1" fill="none"/>
+
+<text x="210" y="3480" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="31.8" lengthAdjust="spacingAndGlyphs">Send</text>
+</g>
+<g id="node-task_receive">
+<rect x="170" y="3526" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="receive"/>
+<rect data-task-marker="receive" x="176" y="3532.5" width="12" height="8" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 176 3532.5 L 182 3537 L 188 3532.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3560" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="50.0" lengthAdjust="spacingAndGlyphs">Receive</text>
+</g>
+<g id="node-task_manual">
+<rect x="170" y="3606" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="manual"/>
+<path data-task-marker="manual" d="M 177 3621.5 V 3616.2 Q 177 3615.2 178 3615.2 Q 179 3615.2 179 3616.2 V 3613.5 Q 179 3612.5 180 3612.5 Q 181 3612.5 181 3613.5 V 3615.4 V 3612.8 Q 181 3611.8 182 3611.8 Q 183 3611.8 183 3612.8 V 3615.4 V 3613.5 Q 183 3612.5 184 3612.5 Q 185 3612.5 185 3613.5 V 3616 Q 186.5 3614.8 187.3 3615.8 Q 187.8 3616.5 187 3617.5 L 184.5 3621.5 Z" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3640" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="44.9" lengthAdjust="spacingAndGlyphs">Manual</text>
+</g>
+<g id="node-activity_sub">
+<rect x="158" y="3702" width="104" height="80" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="sub"/>
+<rect data-activity-marker="collapsed" x="204" y="3768" width="12" height="12" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 210 3770.5 V 3777.5 M 206.5 3774 H 213.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="3725" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="60.8" lengthAdjust="spacingAndGlyphs">Collapsed</text>
+<text x="210" y="3745" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="74.8" lengthAdjust="spacingAndGlyphs">sub-process</text>
+</g>
+<g id="node-activity_call_process">
+<rect x="158" y="3798" width="104" height="64" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="2.6" data-task-type="call-process"/>
+<rect data-activity-marker="collapsed" x="204" y="3848" width="12" height="12" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 210 3850.5 V 3857.5 M 206.5 3854 H 213.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="3823" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="75.4" lengthAdjust="spacingAndGlyphs">Call process</text>
+</g>
+<g id="node-activity_call_global">
+<rect x="146" y="3882" width="128" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="2.6" data-task-type="call-global"/>
+<circle data-task-marker="user" cx="156.5" cy="3890.4" r="2.3" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 152.6 3897.6 Q 156.5 3892.6 160.4 3897.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+
+<text x="210" y="3916" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="93.5" lengthAdjust="spacingAndGlyphs">Call global user</text>
+</g>
+<g id="node-activity_transaction">
+<rect x="158" y="3958" width="104" height="64" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="transaction"/>
+<rect data-task-border="transaction" x="161" y="3961" width="98" height="58" rx="6" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<rect data-activity-marker="collapsed" x="204" y="4008" width="12" height="12" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 210 4010.5 V 4017.5 M 206.5 4014 H 213.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="3983" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="71.5" lengthAdjust="spacingAndGlyphs">Transaction</text>
+</g>
+<g id="node-activity_event_sub">
+<rect x="158" y="4038" width="104" height="96" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" stroke-dasharray="4 3" data-task-type="eventSub"/>
+<g data-event-sub-start="message" data-event-sub-interrupting="true"><circle cx="174" cy="4054" r="10" fill="#ffffff" stroke="#3f3f46" stroke-width="1.2"/><rect data-event-marker="message" data-event-filled="false" x="167" y="4049" width="14" height="10" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 167 4049 L 174 4055 L 181 4049" fill="none" stroke="#3f3f46" stroke-width="1.1"/></g>
+<rect data-activity-marker="collapsed" x="204" y="4120" width="12" height="12" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 210 4122.5 V 4129.5 M 206.5 4126 H 213.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4075" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="35.1" lengthAdjust="spacingAndGlyphs">Event</text>
+<text x="210" y="4095" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="74.8" lengthAdjust="spacingAndGlyphs">sub-process</text>
+</g>
+<g id="node-activity_loop">
+<rect x="170" y="4154" width="80" height="72" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="user"/>
+<circle data-task-marker="user" cx="180.5" cy="4162.4" r="2.3" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 176.6 4169.6 Q 180.5 4164.6 184.4 4169.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path data-activity-marker="loop" d="M 213.2 4215.2 A 4.4 4.4 0 1 0 213.4 4220.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 213.2 4212.8 L 213.2 4216.4 L 209.8 4215.2" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4189" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="31.8" lengthAdjust="spacingAndGlyphs">Loop</text>
+</g>
+<g id="node-activity_parallel_mi">
+<rect x="162" y="4250" width="96" height="72" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="user"/>
+<circle data-task-marker="user" cx="172.5" cy="4258.4" r="2.3" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 168.6 4265.6 Q 172.5 4260.6 176.4 4265.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path data-activity-marker="parallel-mi" d="M 207 4310 V 4318 M 210 4310 V 4318 M 213 4310 V 4318" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4285" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="64.4" lengthAdjust="spacingAndGlyphs">Parallel MI</text>
+</g>
+<g id="node-activity_sequential_mi">
+<rect x="154" y="4346" width="112" height="72" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="user"/>
+<circle data-task-marker="user" cx="164.5" cy="4354.4" r="2.3" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 160.6 4361.6 Q 164.5 4356.6 168.4 4361.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path data-activity-marker="sequential-mi" d="M 206 4407.5 H 214 M 206 4410 H 214 M 206 4412.5 H 214" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4381" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="83.3" lengthAdjust="spacingAndGlyphs">Sequential MI</text>
+</g>
+<g id="node-activity_adhoc">
+<rect x="170" y="4438" width="80" height="64" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="sub"/>
+<rect data-activity-marker="collapsed" x="195" y="4488" width="12" height="12" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 201 4490.5 V 4497.5 M 197.5 4494 H 204.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path data-activity-marker="adhoc" d="M 212 4495 Q 215 4490 218 4495 T 224 4495" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4463" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="43.9" lengthAdjust="spacingAndGlyphs">Ad-hoc</text>
+</g>
+<g id="node-activity_compensation">
+<rect x="150" y="4522" width="120" height="72" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="user"/>
+<circle data-task-marker="user" cx="160.5" cy="4530.4" r="2.3" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 156.6 4537.6 Q 160.5 4532.6 164.4 4537.6" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path data-activity-marker="compensation" d="M 216 4582 L 210 4586 L 216 4590 Z" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 210.5 4582 L 204.5 4586 L 210.5 4590 Z" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4557" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="87.5" lengthAdjust="spacingAndGlyphs">Compensation</text>
+</g>
+<g id="node-boundary_host">
+<rect x="170" y="4638" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="4666" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="45.2" lengthAdjust="spacingAndGlyphs">Activity</text>
+</g>
+<g id="node-boundary_message">
+<circle data-event-role="boundary" cx="178" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="178" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<rect data-event-marker="message" data-event-filled="false" x="171" y="4689" width="14" height="10" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 171 4689 L 178 4695 L 185 4689" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<text x="178" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="48.4" lengthAdjust="spacingAndGlyphs">Message</text>
+</g>
+<g id="node-boundary_timer">
+<circle data-event-role="boundary" cx="186" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="186" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<circle data-event-marker="timer" data-event-filled="false" cx="186" cy="4694" r="8" fill="none" stroke="#3f3f46" stroke-width="1.1"/><circle cx="186" cy="4694" r="6.2" fill="none" stroke="#3f3f46" stroke-width="0.9"/><path d="M 186 4694 L 186 4689.8 M 186 4694 L 189.2 4695.6" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linecap="round"/>
+<text x="186" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="30.5" lengthAdjust="spacingAndGlyphs">Timer</text>
+</g>
+<g id="node-boundary_error">
+<circle data-event-role="boundary" cx="194" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="194" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="error" data-event-filled="false" d="M 192.8 4686.8 L 198.2 4693.4 L 194.6 4693.4 L 196.4 4701.2 L 189.6 4694.4 L 193.8 4694.4 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="194" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="23.2" lengthAdjust="spacingAndGlyphs">Error</text>
+</g>
+<g id="node-boundary_escalation">
+<circle data-event-role="boundary" cx="202" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="202" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="escalation" data-event-filled="false" d="M 202 4686.8 L 207.6 4700.4 L 202 4696.4 L 196.4 4700.4 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="202" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="55.0" lengthAdjust="spacingAndGlyphs">Escalation</text>
+</g>
+<g id="node-boundary_compensation">
+<circle data-event-role="boundary" cx="210" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="compensation" data-event-filled="false" d="M 216.2 4688.6 L 209.8 4694 L 216.2 4699.4 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 210.4 4688.6 L 204 4694 L 210.4 4699.4 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="210" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="75.0" lengthAdjust="spacingAndGlyphs">Compensation</text>
+</g>
+<g id="node-boundary_conditional">
+<circle data-event-role="boundary" cx="218" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="218" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<rect data-event-marker="conditional" data-event-filled="false" x="213" y="4687.5" width="10" height="13" rx="0.5" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/><path d="M 215 4690.7 H 221 M 215 4693.7 H 221 M 215 4696.7 H 220" fill="none" stroke="#3f3f46" stroke-width="1"/>
+<text x="218" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="57.8" lengthAdjust="spacingAndGlyphs">Conditional</text>
+</g>
+<g id="node-boundary_signal">
+<circle data-event-role="boundary" cx="226" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="226" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="signal" data-event-filled="false" d="M 226 4686.8 L 232.4 4699.2 L 219.6 4699.2 Z" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="226" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="33.0" lengthAdjust="spacingAndGlyphs">Signal</text>
+</g>
+<g id="node-boundary_multiple">
+<circle data-event-role="boundary" cx="234" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="234" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<polygon data-event-marker="multiple" data-event-filled="false" points="234 4687 240.65739561406608 4691.836881039375 238.11449676604732 4699.663118960625 229.88550323395268 4699.663118960625 227.34260438593392 4691.836881039375" fill="none" stroke="#3f3f46" stroke-width="1.1" stroke-linejoin="round"/>
+<text x="234" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="40.8" lengthAdjust="spacingAndGlyphs">Multiple</text>
+</g>
+<g id="node-boundary_parallel">
+<circle data-event-role="boundary-nonint" cx="242" cy="4694" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6" stroke-dasharray="4 3"/>
+<circle cx="242" cy="4694" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2" stroke-dasharray="4 3"/>
+<path data-event-marker="parallelMultiple" data-event-filled="false" d="M 242 4687.5 L 242 4700.5 M 235.5 4694 L 248.5 4694" fill="none" stroke="#3f3f46" stroke-width="1.8" stroke-linecap="round"/>
+<text x="242" y="4724" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="82.9" lengthAdjust="spacingAndGlyphs">Parallel multiple</text>
+<text x="242" y="4740" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="78.5" lengthAdjust="spacingAndGlyphs">non-interrupting</text>
+</g>
+<g id="node-cancel_host">
+<rect x="158" y="4770" width="104" height="64" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="transaction"/>
+<rect data-task-border="transaction" x="161" y="4773" width="98" height="58" rx="6" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<rect data-activity-marker="collapsed" x="204" y="4820" width="12" height="12" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/><path d="M 210 4822.5 V 4829.5 M 206.5 4826 H 213.5" stroke="#3f3f46" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<text x="210" y="4795" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="71.5" lengthAdjust="spacingAndGlyphs">Transaction</text>
+</g>
+<g id="node-boundary_cancel">
+<circle data-event-role="boundary" cx="210" cy="4834" r="15.2" fill="#ffffff" stroke="#3f3f46" stroke-width="1.6"/>
+<circle cx="210" cy="4834" r="12" fill="none" stroke="#3f3f46" stroke-width="1.2"/>
+<path data-event-marker="cancel" data-event-filled="false" d="M 204.8 4828.8 L 215.2 4839.2 M 215.2 4828.8 L 204.8 4839.2" fill="none" stroke="#3f3f46" stroke-width="1.8" stroke-linecap="round"/>
+<text x="210" y="4864" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="36.5" lengthAdjust="spacingAndGlyphs">Cancel</text>
+</g>
+<g id="node-data_object">
+<path data-artifact="data-object" d="M 190 5270 L 220 5270 L 230 5280 L 230 5318 L 190 5318 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path d="M 220 5270 L 220 5280 L 230 5280" fill="none" stroke="#3f3f46" stroke-width="1.25"/>
+
+<text x="216" y="5330" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="58.3" lengthAdjust="spacingAndGlyphs">Data object</text>
+</g>
+<g id="node-data_input">
+<path data-artifact="data-object" d="M 190 5182 L 220 5182 L 230 5192 L 230 5230 L 190 5230 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path d="M 220 5182 L 220 5192 L 230 5192" fill="none" stroke="#3f3f46" stroke-width="1.25"/>
+<path data-doc-io="input" d="M 193 5202 L 200 5202 L 200 5199 L 206 5206 L 200 5213 L 200 5210 L 193 5210 Z" fill="none" stroke="#3f3f46" stroke-width="1"/>
+<text x="216" y="5242" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="51.9" lengthAdjust="spacingAndGlyphs">Data input</text>
+</g>
+<g id="node-data_output">
+<path data-artifact="data-object" d="M 190 5094 L 220 5094 L 230 5104 L 230 5142 L 190 5142 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path d="M 220 5094 L 220 5104 L 230 5104" fill="none" stroke="#3f3f46" stroke-width="1.25"/>
+<path data-doc-io="output" d="M 193 5114 L 200 5114 L 200 5111 L 206 5118 L 200 5125 L 200 5122 L 193 5122 Z" fill="#3f3f46" stroke="#3f3f46" stroke-width="1"/>
+<text x="216" y="5154" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="58.3" lengthAdjust="spacingAndGlyphs">Data output</text>
+</g>
+<g id="node-data_collection">
+<path data-artifact="data-object" d="M 190 4994 L 220 4994 L 230 5004 L 230 5042 L 190 5042 Z" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path d="M 220 4994 L 220 5004 L 230 5004" fill="none" stroke="#3f3f46" stroke-width="1.25"/>
+<path data-collection="true" d="M 205 5031 V 5037 M 210 5031 V 5037 M 215 5031 V 5037" stroke="#3f3f46" stroke-width="1.2"/>
+<text x="216" y="5062" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="51.5" lengthAdjust="spacingAndGlyphs">Collection</text>
+</g>
+<g id="node-data_store">
+<path d="M 188 5367 V 5397 A 22 7 0 0 0 232 5397 V 5367" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<ellipse cx="210" cy="5367" rx="22" ry="7" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path d="M 188 5372 A 22 7 0 0 0 232 5372" fill="none" stroke="#3f3f46" stroke-width="1"/>
+<text x="216" y="5416" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="51.9" lengthAdjust="spacingAndGlyphs">Data store</text>
+</g>
+<g id="node-message_artifact">
+<rect data-artifact="message" x="192" y="4920" width="36" height="28" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25"/>
+<path d="M 192 4920 L 210 4935.4 L 228 4920" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<text x="216" y="4960" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="48.4" lengthAdjust="spacingAndGlyphs">Message</text>
+</g>
+<g id="node-annotation">
+<path d="M 170 5454 H 162 V 5486 H 170" fill="none" stroke="#3f3f46" stroke-width="1.1"/>
+<text x="168" y="5470" font-size="12" fill="#52525b" text-anchor="start" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="80.3" lengthAdjust="spacingAndGlyphs">Text annotation</text>
+</g>
+<g id="node-legacy_group">
+<rect data-artifact="group" x="150" y="5514" width="120" height="40" rx="6" fill="none" stroke="#3f3f46" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="210" y="5530" font-size="12" fill="#52525b" text-anchor="middle" dominant-baseline="central" paint-order="stroke" stroke="#ffffff" stroke-width="3" textLength="99.8" lengthAdjust="spacingAndGlyphs">Legacy point group</text>
+</g>
+<g id="node-flow_a">
+<rect x="170" y="5598" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="5626" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">A</text>
+</g>
+<g id="node-flow_b">
+<rect x="362" y="5598" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="402" y="5626" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">B</text>
+</g>
+<g id="node-flow_c">
+<rect x="170" y="5678" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="5706" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">C</text>
+</g>
+<g id="node-flow_d">
+<rect x="362" y="5678" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="402" y="5706" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">D</text>
+</g>
+<g id="node-flow_e">
+<rect x="170" y="5758" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="5786" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">E</text>
+</g>
+<g id="node-flow_f">
+<rect x="170" y="5838" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="5866" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">F</text>
+</g>
+<g id="node-flow_g">
+<rect x="170" y="5918" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="5946" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">G</text>
+</g>
+<g id="node-flow_h">
+<rect x="170" y="5998" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="6026" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">H</text>
+</g>
+<g id="node-flow_i">
+<rect x="170" y="6078" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="6106" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="3.4" lengthAdjust="spacingAndGlyphs">I</text>
+</g>
+<g id="node-flow_j">
+<rect x="170" y="6158" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="6186" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">J</text>
+</g>
+<g id="node-flow_k">
+<rect x="170" y="6238" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="6266" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">K</text>
+</g>
+<g id="node-flow_l">
+<rect x="170" y="6318" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="6346" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">L</text>
+</g>
+<g id="node-flow_m">
+<rect x="170" y="6398" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="210" y="6426" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="11.9" lengthAdjust="spacingAndGlyphs">M</text>
+</g>
+<g id="node-flow_n">
+<rect x="362" y="6398" width="80" height="56" rx="8" fill="#ffffff" stroke="#3f3f46" stroke-width="1.25" data-task-type="abstract"/>
+
+<text x="402" y="6426" font-size="14" fill="#18181b" text-anchor="middle" dominant-baseline="central" textLength="9.5" lengthAdjust="spacingAndGlyphs">N</text>
+</g>
+</g>
+</svg>

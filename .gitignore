@@ -1,0 +1,74 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Generated output and test artifacts
+/outputs/
+/scratch/
+/dist/
+coverage/
+.cache/
+.tmp/
+.pytest_cache/
+.vitest/
+.vite/
+.turbo/
+.nyc_output/
+.eslintcache
+.coverage
+junit.xml
+*.lcov
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.npmrc
+!.npmrc.example
+.secrets/
+secrets/
+credentials*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local editor, OS, and agent state
+.DS_Store
+._*
+.AppleDouble
+Thumbs.db
+.idea/
+.vscode/
+.history/
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+*.rej
+/.codex/
+/.claude/
+/.cursor/
+/.chatgpt/
+/.gemini/
+/.copilot/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Source inputs and repository documentation are intentionally visible to Git.
+# Add machine-specific exclusions to .git/info/exclude instead of hiding them here.
+
+# Repository documentation is public even when /docs/ is excluded locally.
+!/docs/
+!/docs/**

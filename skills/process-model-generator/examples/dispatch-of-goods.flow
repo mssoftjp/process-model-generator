@@ -1,0 +1,44 @@
+# Adapted from Camunda BPMN for Research:
+# https://github.com/camunda/bpmn-for-research/blob/master/BPMN%20for%20Research/English/01-Dispatch-of-goods/03-Solution/Dispatch-of-goods.bpmn
+# English labels and the final parallel join are normalized for this example.
+flow dispatch_of_goods[Dispatch of Goods]
+
+pool shop[Hardware Shop]
+lane logistics[Logistics]
+  task insure[Insure parcel]
+
+lane coordinator[Shipping Coordinator]
+  start ready_to_ship[Order ready]
+  and prepare[]
+  task clarify_method[Choose shipping method]
+  xor special_handling[Special handling?]
+  or standard_options[Optional services?]
+  task get_quotes[Get 3 carrier quotes]
+  task create_label[Print shipping label]
+  task select_carrier[Book carrier]
+  or standard_ready[]
+  xor arrangements_ready[]
+
+lane warehouse[Warehouse]
+  task package_goods[Pack goods]
+  and shipment_ready[]
+  task stage_goods[Stage for pickup]
+  end prepared[Shipment prepared]
+
+ready_to_ship -> prepare
+prepare -> clarify_method
+prepare -> package_goods
+clarify_method -> special_handling
+special_handling -> standard_options: No
+special_handling -> get_quotes: Yes
+standard_options -> insure: Insurance
+standard_options -> create_label: Always
+insure -> standard_ready
+create_label -> standard_ready
+standard_ready -> arrangements_ready
+get_quotes -> select_carrier
+select_carrier -> arrangements_ready
+arrangements_ready -> shipment_ready
+package_goods -> shipment_ready
+shipment_ready -> stage_goods
+stage_goods -> prepared

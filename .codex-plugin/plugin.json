@@ -1,0 +1,29 @@
+{
+  "name": "process-model-generator",
+  "version": "0.2.15",
+  "description": "Translate business descriptions, .flow files, and BPMN XML into validated process models.",
+  "author": {
+    "name": "Musashino Software"
+  },
+  "license": "MIT",
+  "keywords": [
+    "bpmn",
+    "business-process",
+    "workflow",
+    "diagramming"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Process Model Generator",
+    "shortDescription": "Model defensible workflows from business descriptions",
+    "longDescription": "Translate business evidence, .flow files, and BPMN XML into semantically grounded workflows and validated SVG diagrams.",
+    "developerName": "Musashino Software",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Process Model Generator to turn this business description into a semantically supported, validated process model."
+    ]
+  }
+}

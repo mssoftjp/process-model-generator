@@ -1,0 +1,40 @@
+{
+  "name": "process-model-generator",
+  "version": "0.2.15",
+  "private": true,
+  "license": "MIT",
+  "author": "Musashino Software",
+  "description": "Generate validated process models and SVG diagrams from business descriptions and BPMN.",
+  "files": [
+    ".codex-plugin/plugin.json",
+    "skills/process-model-generator/",
+    "scripts/build.mjs",
+    "scripts/check-public-tree.mjs",
+    "src/"
+  ],
+  "type": "module",
+  "bin": {
+    "process-model-generator": "./skills/process-model-generator/scripts/process-model-generator.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check:bundle": "node scripts/build.mjs --check",
+    "check:public": "node scripts/check-public-tree.mjs",
+    "version:show": "node scripts/release.mjs show",
+    "version:check": "node scripts/release.mjs check",
+    "release:package": "node scripts/release.mjs package",
+    "release:prepare": "node scripts/release.mjs prepare",
+    "test": "tsc --noEmit && npm run check:bundle && npm run check:public && vitest run",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

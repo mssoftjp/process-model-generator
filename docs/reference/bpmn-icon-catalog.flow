@@ -1,0 +1,116 @@
+# Documentation-only glyph catalog. Disconnected symbols are intentional; render in lax mode.
+flow BPMN icon catalog
+
+lane Start Events
+  start start_none[None]
+  start(message) start_message[Message]
+  start(timer) start_timer[Timer]
+  start(conditional) start_conditional[Conditional]
+  start(signal) start_signal[Signal]
+  start(multiple) start_multiple[Multiple]
+  start(parallelMultiple) start_parallel[Parallel multiple]
+
+lane Intermediate Catch Events
+  catch(message) catch_message[Message]
+  catch(timer) catch_timer[Timer]
+  catch(conditional) catch_conditional[Conditional]
+  catch(link) catch_link[Link]
+  catch(signal) catch_signal[Signal]
+  catch(multiple) catch_multiple[Multiple]
+  catch(parallelMultiple) catch_parallel[Parallel multiple]
+
+lane Intermediate Throw Events
+  throw throw_none[None]
+  throw(message) throw_message[Message]
+  throw(escalation) throw_escalation[Escalation]
+  throw(compensation) throw_compensation[Compensation]
+  throw(link) throw_link[Link]
+  throw(signal) throw_signal[Signal]
+  throw(multiple) throw_multiple[Multiple]
+
+lane End Events
+  end end_none[None]
+  end(message) end_message[Message]
+  end(error) end_error[Error]
+  end(escalation) end_escalation[Escalation]
+  end(compensation) end_compensation[Compensation]
+  end(signal) end_signal[Signal]
+  end(terminate) end_terminate[Terminate]
+  end(multiple) end_multiple[Multiple]
+
+lane Gateways
+  xor gateway_xor[Exclusive]
+  and gateway_parallel[Parallel]
+  or gateway_inclusive[Inclusive]
+  xor(event) gateway_event[Event-based]
+  and(event) gateway_parallel_event[Parallel event-based]
+  complex gateway_complex[Complex]
+
+lane Tasks
+  task task_abstract[Abstract]
+  task(user) task_user[User]
+  task(service) task_service[Service]
+  task(rule) task_rule[Business rule]
+  task(script) task_script[Script]
+  task(send) task_send[Send]
+  task(receive) task_receive[Receive]
+  task(manual) task_manual[Manual]
+
+lane Activities
+  task(sub) activity_sub[Collapsed sub-process]
+  task(call) activity_call_process[Call process]
+  task(call,global,user) activity_call_global[Call global user]
+  task(transaction) activity_transaction[Transaction]
+  task(eventSub,message) activity_event_sub[Event sub-process]
+  task(user,loop) activity_loop[Loop]
+  task(user,parallel) activity_parallel_mi[Parallel MI]
+  task(user,sequential) activity_sequential_mi[Sequential MI]
+  task(sub,adhoc) activity_adhoc[Ad-hoc]
+  task(user,compensation) activity_compensation[Compensation]
+
+lane Boundary Events
+  task boundary_host[Activity]
+  boundary(message) boundary_message[Message] @boundary_host
+  boundary(timer) boundary_timer[Timer] @boundary_host
+  boundary(error) boundary_error[Error] @boundary_host
+  boundary(escalation) boundary_escalation[Escalation] @boundary_host
+  boundary(compensation) boundary_compensation[Compensation] @boundary_host
+  boundary(conditional) boundary_conditional[Conditional] @boundary_host
+  boundary(signal) boundary_signal[Signal] @boundary_host
+  boundary(multiple) boundary_multiple[Multiple] @boundary_host
+  boundary(parallelMultiple,nonint) boundary_parallel[Parallel multiple non-interrupting] @boundary_host
+  task(transaction) cancel_host[Transaction]
+  boundary(cancel) boundary_cancel[Cancel] @cancel_host
+
+lane Data and Artifacts
+  doc data_object[Data object]
+  doc(input) data_input[Data input]
+  doc(output) data_output[Data output]
+  doc(collection) data_collection[Collection]
+  store data_store[Data store]
+  doc(message) message_artifact[Message]
+  note annotation[Text annotation]
+  group legacy_group[Legacy point group]
+
+lane Flow Markers
+  task flow_a[A]
+  task flow_b[B]
+  task flow_c[C]
+  task flow_d[D]
+  task flow_e[E]
+  task flow_f[F]
+  task flow_g[G]
+  task flow_h[H]
+  task flow_i[I]
+  task flow_j[J]
+  task flow_k[K]
+  task flow_l[L]
+  task flow_m[M]
+  task flow_n[N]
+flow_a -> flow_b: Sequence
+flow_c ->/ flow_d
+flow_e -.-> flow_f
+flow_g -.- flow_h
+flow_i ..> flow_j
+flow_k <..> flow_l
+flow_m -> flow_n: Conditional
