@@ -170,9 +170,14 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
   if (messages.length === 0) return;
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)!));
   const limit = g.nodes.length + g.edges.length + 2;
+  // 積み重なった分岐の分離で与える列の下限(ノード id → 最小列)
+  const floors = new Map<string, number>();
   const relax = (active: NormEdge[]): boolean => {
     for (let iter = 0; ; iter++) {
       let changed = false;
+      for (const [id, floor] of floors) {
+        if ((col.get(id) ?? 0) < floor) { col.set(id, floor); changed = true; }
+      }
       for (const e of active) {
         const need = col.get(e.from) ?? 0;
         if ((col.get(e.to) ?? 0) < need) { col.set(e.to, need); changed = true; }
@@ -199,6 +204,59 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
       active.pop();
       for (const [id, c] of snapshot) col.set(id, c);
     }
+  }
+  separateStackedCorridors(g, col, active, floors, relax);
+}
+
+/**
+ * 積み重なった分岐の分離。同じ隣接プール対を同じ列で渡るメッセージが 2 本あり、送信元
+ * (または受信先)が別ノードなら、列中心の縦回廊は必ず衝突する(同じレーンなら別の行、
+ * 別のレーンなら回廊側のレーンのセルを通る)。後発(本流でない送信元を優先、次いで宣言順)
+ * の送信元に「列 +1」の下限を与えて再緩和し、受信先は S-15 の制約で追従させる。
+ * 手描きで「2 本目の通信は隣の列に一本ずらす」のと同じ。上限回数で打ち切る(決定的)。
+ */
+function separateStackedCorridors(
+  g: NormGraph, col: Map<string, number>, active: NormEdge[], floors: Map<string, number>,
+  relax: (active: NormEdge[]) => boolean,
+): void {
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const poolIdx = (id: string) => poolIndex.get(poolOfLane.get(nodeById.get(id)?.lane ?? '') ?? '');
+  const spine = (id: string) => nodeById.get(id)?.onSpine === true;
+  const sameNodes = (a: NormEdge, b: NormEdge) =>
+    (a.from === b.from && a.to === b.to) || (a.from === b.to && a.to === b.from);
+  // 一度ずらしても同列のまま(制約で連動している)対は二度と試さない(無限連鎖の防止)
+  const tried = new Set<string>();
+  for (let round = 0; round < active.length; round++) {
+    let bumped = false;
+    const seen = new Map<string, NormEdge[]>(); // `${lo}-${hi}:${col}` → 先着のメッセージ
+    for (const m of active) {
+      const pu = poolIdx(m.from);
+      const pv = poolIdx(m.to);
+      if (pu === undefined || pv === undefined || Math.abs(pu - pv) !== 1) continue;
+      const c = col.get(m.from);
+      if (c === undefined || col.get(m.to) !== c) continue;
+      const key = `${Math.min(pu, pv)}-${Math.max(pu, pv)}:${c}`;
+      const earlier = seen.get(key) ?? [];
+      seen.set(key, [...earlier, m]);
+      // 同じ 2 ノード間の往復は面共有で平行に描けるので衝突しない
+      const first = earlier.find((o) => !sameNodes(o, m) && !tried.has(`${o.id}|${m.id}`));
+      if (!first) continue;
+      tried.add(`${first.id}|${m.id}`);
+      // 本流の送信元は動かさない。両方本流(または両方非本流)なら後発を動かす
+      const loser = spine(m.from) && !spine(first.from) ? first : m;
+      const snapshot = new Map(col);
+      floors.set(loser.from, c + 1);
+      if (!relax(active)) {
+        floors.delete(loser.from);
+        for (const [id, v] of snapshot) col.set(id, v);
+        continue;
+      }
+      bumped = true;
+      break;
+    }
+    if (!bumped) return;
   }
 }
 

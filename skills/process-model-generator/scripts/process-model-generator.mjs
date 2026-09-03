@@ -1945,9 +1945,16 @@ function alignMessageTiming(g, col, docIds) {
   if (messages.length === 0) return;
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)));
   const limit = g.nodes.length + g.edges.length + 2;
+  const floors = /* @__PURE__ */ new Map();
   const relax = (active2) => {
     for (let iter = 0; ; iter++) {
       let changed = false;
+      for (const [id, floor] of floors) {
+        if ((col.get(id) ?? 0) < floor) {
+          col.set(id, floor);
+          changed = true;
+        }
+      }
       for (const e of active2) {
         const need = col.get(e.from) ?? 0;
         if ((col.get(e.to) ?? 0) < need) {
@@ -1982,6 +1989,44 @@ function alignMessageTiming(g, col, docIds) {
       active.pop();
       for (const [id, c] of snapshot) col.set(id, c);
     }
+  }
+  separateStackedCorridors(g, col, active, floors, relax);
+}
+function separateStackedCorridors(g, col, active, floors, relax) {
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const poolIdx = (id) => poolIndex.get(poolOfLane.get(nodeById.get(id)?.lane ?? "") ?? "");
+  const spine = (id) => nodeById.get(id)?.onSpine === true;
+  const sameNodes = (a, b) => a.from === b.from && a.to === b.to || a.from === b.to && a.to === b.from;
+  const tried = /* @__PURE__ */ new Set();
+  for (let round = 0; round < active.length; round++) {
+    let bumped = false;
+    const seen = /* @__PURE__ */ new Map();
+    for (const m of active) {
+      const pu = poolIdx(m.from);
+      const pv = poolIdx(m.to);
+      if (pu === void 0 || pv === void 0 || Math.abs(pu - pv) !== 1) continue;
+      const c = col.get(m.from);
+      if (c === void 0 || col.get(m.to) !== c) continue;
+      const key2 = `${Math.min(pu, pv)}-${Math.max(pu, pv)}:${c}`;
+      const earlier = seen.get(key2) ?? [];
+      seen.set(key2, [...earlier, m]);
+      const first = earlier.find((o) => !sameNodes(o, m) && !tried.has(`${o.id}|${m.id}`));
+      if (!first) continue;
+      tried.add(`${first.id}|${m.id}`);
+      const loser = spine(m.from) && !spine(first.from) ? first : m;
+      const snapshot = new Map(col);
+      floors.set(loser.from, c + 1);
+      if (!relax(active)) {
+        floors.delete(loser.from);
+        for (const [id, v] of snapshot) col.set(id, v);
+        continue;
+      }
+      bumped = true;
+      break;
+    }
+    if (!bumped) return;
   }
 }
 function keepDocsOffMessageCorridors(g, col, docIds) {
@@ -2211,6 +2256,7 @@ function route(g, p, optimizeReadability = false, options) {
     poolGapRuns: /* @__PURE__ */ new Map(),
     colRuns: /* @__PURE__ */ new Map(),
     rowRuns: /* @__PURE__ */ new Map(),
+    stubRuns: /* @__PURE__ */ new Map(),
     labelCrossMinus: crossMinusLabelEvents(g),
     planned: /* @__PURE__ */ new Map(),
     optimizeReadability,
@@ -2557,6 +2603,17 @@ function noteRowRun(ctx, lane, row, a, b, e) {
   ctx.rowRuns.set(key2, runs);
 }
 var gutterScale = (g) => g - 0.5;
+function reserveStubRun(ctx, lane, row, yOffset, a, b, e) {
+  const key2 = `${rowKey(lane, row)}@${yOffset}`;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  const from = colRunEnd(e, "from");
+  const to = colRunEnd(e, "to");
+  const runs = ctx.stubRuns.get(key2) ?? [];
+  if (runs.some((r) => r.from !== from && r.to !== to && r.a <= hi && lo <= r.b)) return false;
+  runs.push({ a: lo, b: hi, from, to });
+  ctx.stubRuns.set(key2, runs);
+  return true;
+}
 function allocGutter(ctx, gi, side, a, b) {
   const key2 = `${gi}:${side}`;
   const runs = ctx.gutterRuns.get(key2) ?? [];
@@ -3104,17 +3161,38 @@ function planAcrossPoolGap(ctx, e, u, v, gap) {
   if (z) return z;
   const rightward = v.col > u.col;
   const sameCol = v.col === u.col;
-  const fromSide = sameCol ? "right" : rightward ? "left" : "right";
+  let fromSide = sameCol ? "right" : rightward ? "left" : "right";
   let toSide = sameCol ? "left" : rightward ? "left" : "right";
-  const srcG = rightward ? u.col : u.col + 1;
-  let dstG = rightward || sameCol ? v.col : v.col + 1;
+  let srcG = fromSide === "left" ? u.col : u.col + 1;
+  let dstG = toSide === "left" ? v.col : v.col + 1;
   if (ctx.gapDestFlip.has(e.id)) {
     toSide = toSide === "left" ? "right" : "left";
     dstG = toSide === "left" ? v.col : v.col + 1;
   }
   const srcYOffset = down ? 8 : -8;
-  const dstMagnitude = toSide === "left" ? 12 : 14;
-  const dstYOffset = down ? -dstMagnitude : dstMagnitude;
+  const stub = (side, c, g) => side === "left" ? [gutterScale(g), c] : [c, gutterScale(g)];
+  if (!reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(fromSide, u.col, srcG), e)) {
+    const altSide = fromSide === "left" ? "right" : "left";
+    const altG = altSide === "left" ? u.col : u.col + 1;
+    if (reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(altSide, u.col, altG), e)) {
+      fromSide = altSide;
+      srcG = altG;
+    }
+  }
+  let dstMagnitude = toSide === "left" ? 12 : 14;
+  let dstYOffset = down ? -dstMagnitude : dstMagnitude;
+  if (!reserveStubRun(ctx, v.lane, v.row, dstYOffset, ...stub(toSide, v.col, dstG), e)) {
+    const altSide = toSide === "left" ? "right" : "left";
+    const altG = altSide === "left" ? v.col : v.col + 1;
+    const altMag = altSide === "left" ? 12 : 14;
+    const altOffset = down ? -altMag : altMag;
+    if (reserveStubRun(ctx, v.lane, v.row, altOffset, ...stub(altSide, v.col, altG), e)) {
+      toSide = altSide;
+      dstG = altG;
+      dstMagnitude = altMag;
+      dstYOffset = altOffset;
+    }
+  }
   const srcRun = allocGutter(ctx, srcG, "exit", gU, gapPos);
   const dstRun = allocGutter(ctx, dstG, "entry", gapPos, gV);
   const srcScale = srcG - 0.5;

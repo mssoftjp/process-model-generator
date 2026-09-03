@@ -66,6 +66,10 @@ interface Ctx {
   // (列 c = c、溝 g = g - 0.5)。S-36 の「ノードで終わる」相互保護を明示予約に置き換え、
   // 列中心で終わる水平(行先行 L)も同じ規則で安全に扱う。共有規則は colRuns と同じ。
   rowRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
+  // 側面出し(S-57)の水平スタブ。`${lane}:${row}@${yOffset}` ごとに列スケール区間を持つ。
+  // 同じ行の隣り合うノードが同じ溝へ左右から同じ高さで出ると、溝の中でトラック位置の差だけ
+  // 重なる。離散区間では端点接触なので、この登録だけ端点を含めて衝突とみなす。
+  stubRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
   labelCrossMinus: ReadonlySet<string>; // ラベルを交差軸マイナス側へ逃がしたイベント(P1 と同じ集合)
   planned: Map<string, EdgePlan>; // 宣言順で先に計画した辺(入口面の静的参照に使う)
   optimizeReadability: boolean;
@@ -112,6 +116,7 @@ export function route(
     poolGapRuns: new Map(),
     colRuns: new Map(),
     rowRuns: new Map(),
+    stubRuns: new Map(),
     labelCrossMinus: crossMinusLabelEvents(g),
     planned: new Map(),
     optimizeReadability,
@@ -560,6 +565,21 @@ function reserveRowRun(ctx: Ctx, lane: string, row: number, a: number, b: number
 
 /** 溝 g の列スケール位置 */
 const gutterScale = (g: number) => g - 0.5;
+
+/** 側面出しスタブの予約。端点接触(同じ溝を左右から使う)も衝突。成立すれば登録して true。 */
+function reserveStubRun(
+  ctx: Ctx, lane: string, row: number, yOffset: number, a: number, b: number, e: NormEdge,
+): boolean {
+  const key = `${rowKey(lane, row)}@${yOffset}`;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  const from = colRunEnd(e, 'from');
+  const to = colRunEnd(e, 'to');
+  const runs = ctx.stubRuns.get(key) ?? [];
+  if (runs.some((r) => r.from !== from && r.to !== to && r.a <= hi && lo <= r.b)) return false;
+  runs.push({ a: lo, b: hi, from, to });
+  ctx.stubRuns.set(key, runs);
+  return true;
+}
 
 // ---- 走行の登録 ----
 
@@ -1264,20 +1284,43 @@ function planAcrossPoolGap(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gap: number)
   // BPMN上の意味を持たず、視覚ノイズになるため作らない。
   const rightward = v.col > u.col;
   const sameCol = v.col === u.col;
-  const fromSide: PortSide = sameCol ? 'right' : rightward ? 'left' : 'right';
+  let fromSide: PortSide = sameCol ? 'right' : rightward ? 'left' : 'right';
   let toSide: PortSide = sameCol ? 'left' : rightward ? 'left' : 'right';
   // 両端だけを直近の列溝へ逃がし、長い水平成分はプール間回廊に閉じる。
   // 中心列直結は後続辺との重なりを局所判定できないため採用しない。
-  const srcG = rightward ? u.col : u.col + 1;
-  let dstG = rightward || sameCol ? v.col : v.col + 1;
+  let srcG = fromSide === 'left' ? u.col : u.col + 1;
+  let dstG = toSide === 'left' ? v.col : v.col + 1;
   // Cycle C: 対象の反対面。左方向到着が対象の右溝を貫いて本流水平と交差するのを避ける。
   if (ctx.gapDestFlip.has(e.id)) {
     toSide = toSide === 'left' ? 'right' : 'left';
     dstG = toSide === 'left' ? v.col : v.col + 1;
   }
   const srcYOffset = down ? 8 : -8;
-  const dstMagnitude = toSide === 'left' ? 12 : 14;
-  const dstYOffset = down ? -dstMagnitude : dstMagnitude;
+  // 同じ行の隣ノードが同じ溝へ同じ高さで出ていれば、反対側の溝から出す(スタブの重なり防止)
+  const stub = (side: PortSide, c: number, g: number) =>
+    side === 'left' ? [gutterScale(g), c] as const : [c, gutterScale(g)] as const;
+  if (!reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(fromSide, u.col, srcG), e)) {
+    const altSide: PortSide = fromSide === 'left' ? 'right' : 'left';
+    const altG = altSide === 'left' ? u.col : u.col + 1;
+    if (reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(altSide, u.col, altG), e)) {
+      fromSide = altSide;
+      srcG = altG;
+    }
+  }
+  let dstMagnitude = toSide === 'left' ? 12 : 14;
+  let dstYOffset = down ? -dstMagnitude : dstMagnitude;
+  if (!reserveStubRun(ctx, v.lane, v.row, dstYOffset, ...stub(toSide, v.col, dstG), e)) {
+    const altSide: PortSide = toSide === 'left' ? 'right' : 'left';
+    const altG = altSide === 'left' ? v.col : v.col + 1;
+    const altMag = altSide === 'left' ? 12 : 14;
+    const altOffset = down ? -altMag : altMag;
+    if (reserveStubRun(ctx, v.lane, v.row, altOffset, ...stub(altSide, v.col, altG), e)) {
+      toSide = altSide;
+      dstG = altG;
+      dstMagnitude = altMag;
+      dstYOffset = altOffset;
+    }
+  }
   const srcRun = allocGutter(ctx, srcG, 'exit', gU, gapPos);
   const dstRun = allocGutter(ctx, dstG, 'entry', gapPos, gV);
   const srcScale = srcG - 0.5;
