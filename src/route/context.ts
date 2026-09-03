@@ -13,7 +13,8 @@ export interface Ctx {
   g: NormGraph;
   p: Placement;
   nodeById: Map<string, NormNode>;
-  occupied: Map<string, string>; // `${lane}:${row}:${col}` -> nodeId
+  occupied: Map<string, string>; // cellKey(lane, row, col) -> nodeId。cellOccupied / occupantAt で照会する
+  rows: ReadonlyArray<{ lane: string; row: number; pos: number }>; // 全レーンの行と通し縦位置(縦走の占有検査用)
   globalRow: Map<string, number>; // `${lane}:${row}` -> 通し縦位置(行)
   globalChannel: Map<string, number>; // `${lane}:${row}` -> 通し縦位置(行 r の上チャネル)
   globalPoolGap: Map<number, number>; // 上から gap 番目のプール間回廊の通し位置
@@ -68,8 +69,9 @@ export function buildContext(
   const occupied = new Map<string, string>();
   for (const n of g.nodes) {
     if (isAttachedBoundary(n)) continue; // 対象 Activity がセルを占有する
-    occupied.set(`${n.lane}:${p.row.get(n.id)}:${p.col.get(n.id)}`, n.id);
+    occupied.set(cellKey(n.lane, p.row.get(n.id)!, p.col.get(n.id)!), n.id);
   }
+  const rows: Array<{ lane: string; row: number; pos: number }> = [];
   const globalRow = new Map<string, number>();
   const globalChannel = new Map<string, number>();
   const globalPoolGap = new Map<number, number>();
@@ -82,15 +84,16 @@ export function buildContext(
       if (pi !== undefined) globalPoolGap.set(pi, pos++);
     }
     prevPool = lane.pool;
-    const rows = p.laneRows.get(lane.id) ?? 1;
-    for (let r = 0; r < rows; r++) {
-      globalChannel.set(`${lane.id}:${r}`, pos++);
-      globalRow.set(`${lane.id}:${r}`, pos++);
+    const laneRowCount = p.laneRows.get(lane.id) ?? 1;
+    for (let r = 0; r < laneRowCount; r++) {
+      globalChannel.set(rowKey(lane.id, r), pos++);
+      globalRow.set(rowKey(lane.id, r), pos);
+      rows.push({ lane: lane.id, row: r, pos: pos++ });
     }
-    if (optimizeReadability) globalChannel.set(`${lane.id}:${rows}`, pos++);
+    if (optimizeReadability) globalChannel.set(rowKey(lane.id, laneRowCount), pos++);
   }
   return {
-    g, p, nodeById, occupied, globalRow, globalChannel, globalPoolGap, laneRows: p.laneRows,
+    g, p, nodeById, occupied, rows, globalRow, globalChannel, globalPoolGap, laneRows: p.laneRows,
     gutterRuns: new Map(), channelRuns: new Map(), runSeq: { n: 0 }, gutterLabelNeed: new Map(),
     poolGapRuns: new Map(),
     colRuns: new Map(),
@@ -105,19 +108,28 @@ export function buildContext(
 }
 
 export const rowKey = (lane: string, row: number) => `${lane}:${row}`;
+export const cellKey = (lane: string, row: number, col: number) => `${lane}:${row}:${col}`;
+
+/** セル (lane, row, col) を占めるノード id。境界イベントは対象 Activity の中なので占めない。 */
+export function occupantAt(ctx: Ctx, lane: string, row: number, col: number): string | undefined {
+  return ctx.occupied.get(cellKey(lane, row, col));
+}
+
+export function cellOccupied(ctx: Ctx, lane: string, row: number, col: number): boolean {
+  return ctx.occupied.has(cellKey(lane, row, col));
+}
 
 export function nodeBetweenOnRow(ctx: Ctx, lane: string, row: number, c0: number, c1: number): boolean {
-  for (let c = c0; c <= c1; c++) if (ctx.occupied.has(`${lane}:${row}:${c}`)) return true;
+  for (let c = c0; c <= c1; c++) if (cellOccupied(ctx, lane, row, c)) return true;
   return false;
 }
 
 /** 列 col の中心 +28px のレールを a..b の間で通れるか: 途中のセルが空か幅の狭い doc だけ */
 export function railClear(ctx: Ctx, col: number, a: number, b: number): boolean {
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  for (const [key, gr] of ctx.globalRow) {
-    if (gr <= lo || gr >= hi) continue;
-    const i = key.lastIndexOf(':');
-    const occ = ctx.occupied.get(`${key.slice(0, i)}:${key.slice(i + 1)}:${col}`);
+  for (const r of ctx.rows) {
+    if (r.pos <= lo || r.pos >= hi) continue;
+    const occ = occupantAt(ctx, r.lane, r.row, col);
     if (occ !== undefined && ctx.nodeById.get(occ)?.kind !== 'doc') return false;
   }
   return true;
@@ -126,10 +138,9 @@ export function railClear(ctx: Ctx, col: number, a: number, b: number): boolean 
 /** 列 col の中心線を、通し縦位置 a..b の間(両端は含まない)で垂直に通れるか */
 function columnClear(ctx: Ctx, col: number, a: number, b: number): boolean {
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  for (const [key, gr] of ctx.globalRow) {
-    if (gr <= lo || gr >= hi) continue;
-    const i = key.lastIndexOf(':');
-    if (ctx.occupied.has(`${key.slice(0, i)}:${key.slice(i + 1)}:${col}`)) return false;
+  for (const r of ctx.rows) {
+    if (r.pos <= lo || r.pos >= hi) continue;
+    if (cellOccupied(ctx, r.lane, r.row, col)) return false;
   }
   return true;
 }

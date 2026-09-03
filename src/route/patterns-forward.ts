@@ -6,7 +6,7 @@ import { isDocLike } from '../types.ts';
 import type {
   EdgePlan, GutterSide, NormEdge, PortSide,
 } from '../types.ts';
-import { rowKey, cellOf, nodeBetweenOnRow, railClear, reserveColRun, markExclusiveColRun, canReserveRowRun, noteRowRun, gutterScale, reserveStubRun, noteStubRun, fallbackOffset, allocGutter, allocChannel, noteLabelNeed } from './context.ts';
+import { rowKey, cellOccupied, occupantAt, cellOf, nodeBetweenOnRow, railClear, reserveColRun, markExclusiveColRun, canReserveRowRun, noteRowRun, gutterScale, reserveStubRun, noteStubRun, fallbackOffset, allocGutter, allocChannel, noteLabelNeed } from './context.ts';
 import type { Ctx, Cell } from './context.ts';
 import { portX, portY, portStubY, gutterX, nodeCX, nodeCY, channelY, rowMidY, verticalLine, verticalZ } from './symbols.ts';
 import { isGw, hasSequenceOut, needsBottomMessagePort, bottomFree, eventHasBottomOut, eventBottomOpen, topFree, westFree, faceQuiet, noDownwardOut, bottomOutFree, fallbackRightY, adjacentPoolGap, poolPairIndices, alternativeBelow } from './predicates.ts';
@@ -43,7 +43,7 @@ export function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   const gU = ctx.globalRow.get(rowKey(u.lane, u.row))!;
   const gV = ctx.globalRow.get(rowKey(v.lane, v.row))!;
   const rowFree = !nodeBetweenOnRow(ctx, v.lane, v.row, u.col + 1, v.col - 1);
-  const rowFreeWide = rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`);
+  const rowFreeWide = rowFree && !cellOccupied(ctx, v.lane, v.row, u.col);
   const k: ForwardCase = { ctx, e, u, v, sameRow, gU, gV, rowFree, rowFreeWide };
   for (const pattern of FORWARD_PATTERNS) {
     const plan = pattern(k);
@@ -112,7 +112,7 @@ function assocDropToDoc({ ctx, e, u, v, gU, gV, rowFree }: ForwardCase): EdgePla
   );
   if (!(
     gV > gU && v.col > u.col && otherAssoc &&
-    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    !cellOccupied(ctx, v.lane, v.row, u.col) &&
     rowFree &&
     reserveColRun(ctx, u.col, gU, gV, e)
   )) return undefined;
@@ -163,7 +163,7 @@ function assocRailCoWriter({ ctx, e, u, v, gU, gV }: ForwardCase): EdgePlan | un
     other.kind === 'assoc' && other.to === e.to && other.from !== e.from &&
     ctx.p.col.get(other.from) === v.col
   );
-  const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
+  const adjacentPeer = occupantAt(ctx, v.lane, v.row, u.col);
   const adjacentFour =
     v.col === u.col + 1 && adjacentPeer !== undefined &&
     ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to);
@@ -236,7 +236,7 @@ function messageDownward({ ctx, e, u, v, gU, gV }: ForwardCase): EdgePlan | unde
   // 終端チャネルの直下のセルにノードがいると、そのノードへの最終降下と同じ x で
   // 重なる(チャネル帯の中は離散区間で見えない)。空のときだけ縦出しする
   if (
-    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    !cellOccupied(ctx, v.lane, v.row, u.col) &&
     reserveColRun(ctx, u.col, gU, chV, e)
   ) {
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, 'above', gU, u.col);
@@ -257,8 +257,8 @@ function messageUpward({ ctx, e, u, v, gU, gV }: ForwardCase): EdgePlan | undefi
   if (e.kind !== 'msg' || !(gV < gU && topFree(ctx, u))) return undefined;
   const chV = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
   if (
-    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
-    !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) &&
+    !cellOccupied(ctx, v.lane, v.row, u.col) &&
+    !(v.row > 0 && cellOccupied(ctx, v.lane, v.row - 1, u.col)) &&
     reserveColRun(ctx, u.col, chV, gU, e)
   ) {
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, 'below', gU, u.col);
@@ -381,7 +381,7 @@ function gatewayDetourSameRow({ ctx, e, u, v, gU, gV, sameRow, rowFree }: Forwar
 function rise({ ctx, e, u, v, gU, gV, rowFree }: ForwardCase): EdgePlan | undefined {
   if (!(
     ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) &&
-    topFree(ctx, u) && rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    topFree(ctx, u) && rowFree && !cellOccupied(ctx, v.lane, v.row, u.col) &&
     canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) &&
     reserveColRun(ctx, u.col, gV, gU, e)
   )) return undefined;
@@ -432,7 +432,7 @@ function gatewayDownward({ ctx, e, u, v, gU, gV, rowFree }: ForwardCase): EdgePl
   if (!(isGw(u.node) && !e.onSpine && gV > gU)) return undefined;
   if (
     !isGw(v.node) &&
-    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    !cellOccupied(ctx, v.lane, v.row, u.col) &&
     rowFree &&
     reserveColRun(ctx, u.col, gU, gV, e)
   ) {
@@ -449,7 +449,7 @@ function gatewayDownward({ ctx, e, u, v, gU, gV, rowFree }: ForwardCase): EdgePl
   const chV = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
   // msg 縦出しと同じガード: 自列中心を対象行上チャネルまで降りて横走する中間形。
   if (
-    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    !cellOccupied(ctx, v.lane, v.row, u.col) &&
     reserveColRun(ctx, u.col, gU, chV, e)
   ) {
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, 'above', gU, u.col);
@@ -529,7 +529,7 @@ function rowApproach({ ctx, e, u, v, gU, gV, sameRow, rowFreeWide }: ForwardCase
 /** 隣接列で同じ終点へ収束する辺は、出口溝と入口溝を一度だけ使う。 */
 function adjacentConvergingAssoc({ ctx, e, u, v, gU, gV, sameRow }: ForwardCase): EdgePlan | undefined {
   const g1 = u.col + 1;
-  const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
+  const adjacentPeer = occupantAt(ctx, v.lane, v.row, u.col);
   if (!(
     e.kind === 'assoc' && !isDocLike(u.node.kind) && v.node.kind === 'doc' &&
     u.lane === v.lane && !sameRow && v.col === g1 && adjacentPeer !== undefined &&
@@ -628,7 +628,7 @@ function planIntoTop(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number): EdgeP
   const chBelowKey = rowKey(v.lane, v.row + 1);
   const canEnterBottom =
     fromBelow && ctx.globalChannel.has(chBelowKey) && bottomOutFree(ctx, v, vRowPos) &&
-    !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`) &&
+    !cellOccupied(ctx, v.lane, v.row + 1, v.col) &&
     (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) &&
     !needsBottomMessagePort(ctx, v.node.id);
   const farTargetGutter =

@@ -4,7 +4,7 @@ import { isAttachedBoundary, isEventKind } from '../bpmn.ts';
 import type {
   EdgePlan, NormEdge, NormNode, PortSide, SymX,
 } from '../types.ts';
-import { rowKey, cellOf, reserveColRun, canReserveColRun, markExclusiveColRun, gutterScale, reserveStubRun, noteStubRun, fallbackOffset, allocGutter, allocChannel, allocPoolGap, noteLabelNeed, gapOrderConsistent } from './context.ts';
+import { rowKey, cellOccupied, cellOf, reserveColRun, canReserveColRun, markExclusiveColRun, gutterScale, reserveStubRun, noteStubRun, fallbackOffset, allocGutter, allocChannel, allocPoolGap, noteLabelNeed, gapOrderConsistent } from './context.ts';
 import type { Ctx, Cell } from './context.ts';
 import { portX, portY, portStubY, gutterX, nodeCX, nodeCY, channelY, poolChannelY, verticalLine, verticalZ } from './symbols.ts';
 import { isGw, blackboxLane, bottomFree, eventLabelMovedUp, eventHasBottomOut, eventBottomOpen, topFree, faceQuiet, topUsersSlottable, bottomOutFree, fallbackRightY, adjacentPoolGap, poolPairIndices } from './predicates.ts';
@@ -444,7 +444,7 @@ export function planPoolMsg(ctx: Ctx, e: NormEdge): EdgePlan {
   const poolEdge = above ? 'bottom' : 'top';
   // 下辺入りは直下のチャネルを使う。直下のセルにノードがいると、そのノードへの上辺降下と
   // 同じ列中心で重なる(planIntoTop の canEnterBottom と同じ条件)
-  const belowClear = !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`);
+  const belowClear = !cellOccupied(ctx, v.lane, v.row + 1, v.col);
   const faceOpen = face === 'top' || (eventBottomOpen(ctx, v.node) && belowClear);
   const enter: PortSide = faceOpen ? face : 'top';
   if ((enter === 'top' ? above : !above) && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {

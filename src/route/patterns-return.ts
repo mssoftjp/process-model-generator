@@ -4,7 +4,7 @@ import { isAttachedBoundary } from '../bpmn.ts';
 import type {
   EdgePlan, NormEdge, PortSide,
 } from '../types.ts';
-import { rowKey, cellOf, reserveColRun, noteRowRun, gutterScale, noteStubRun, fallbackOffset, allocGutter, allocChannel } from './context.ts';
+import { rowKey, cellOccupied, cellOf, reserveColRun, noteRowRun, gutterScale, noteStubRun, fallbackOffset, allocGutter, allocChannel } from './context.ts';
 import type { Ctx } from './context.ts';
 import { portX, portY, gutterX, nodeCX, channelY, verticalZ } from './symbols.ts';
 import { isGw, needsBottomMessagePort, bottomFree, topFree, noDownwardOut, fallbackRightY } from './predicates.ts';
@@ -79,8 +79,8 @@ export function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
   if (
     (ctx.optimizeReadability || !isGw(u.node)) && e.kind === 'seq' && chV < gU &&
     !isAttachedBoundary(u.node) && topFree(ctx, u) &&
-    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
-    !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) &&
+    !cellOccupied(ctx, v.lane, v.row, u.col) &&
+    !(v.row > 0 && cellOccupied(ctx, v.lane, v.row - 1, u.col)) &&
     reserveColRun(ctx, u.col, chV, gU, e)
   ) {
     const t = allocChannel(ctx, v.lane, v.row, v.col, u.col, 'below', gU, u.col);

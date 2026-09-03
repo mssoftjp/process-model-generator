@@ -2322,8 +2322,9 @@ function buildContext(g, p, optimizeReadability = false, options) {
   const occupied = /* @__PURE__ */ new Map();
   for (const n of g.nodes) {
     if (isAttachedBoundary(n)) continue;
-    occupied.set(`${n.lane}:${p.row.get(n.id)}:${p.col.get(n.id)}`, n.id);
+    occupied.set(cellKey(n.lane, p.row.get(n.id), p.col.get(n.id)), n.id);
   }
+  const rows = [];
   const globalRow = /* @__PURE__ */ new Map();
   const globalChannel = /* @__PURE__ */ new Map();
   const globalPoolGap = /* @__PURE__ */ new Map();
@@ -2336,18 +2337,20 @@ function buildContext(g, p, optimizeReadability = false, options) {
       if (pi !== void 0) globalPoolGap.set(pi, pos++);
     }
     prevPool = lane.pool;
-    const rows = p.laneRows.get(lane.id) ?? 1;
-    for (let r = 0; r < rows; r++) {
-      globalChannel.set(`${lane.id}:${r}`, pos++);
-      globalRow.set(`${lane.id}:${r}`, pos++);
+    const laneRowCount = p.laneRows.get(lane.id) ?? 1;
+    for (let r = 0; r < laneRowCount; r++) {
+      globalChannel.set(rowKey(lane.id, r), pos++);
+      globalRow.set(rowKey(lane.id, r), pos);
+      rows.push({ lane: lane.id, row: r, pos: pos++ });
     }
-    if (optimizeReadability) globalChannel.set(`${lane.id}:${rows}`, pos++);
+    if (optimizeReadability) globalChannel.set(rowKey(lane.id, laneRowCount), pos++);
   }
   return {
     g,
     p,
     nodeById,
     occupied,
+    rows,
     globalRow,
     globalChannel,
     globalPoolGap,
@@ -2368,26 +2371,31 @@ function buildContext(g, p, optimizeReadability = false, options) {
   };
 }
 var rowKey = (lane, row) => `${lane}:${row}`;
+var cellKey = (lane, row, col) => `${lane}:${row}:${col}`;
+function occupantAt(ctx, lane, row, col) {
+  return ctx.occupied.get(cellKey(lane, row, col));
+}
+function cellOccupied(ctx, lane, row, col) {
+  return ctx.occupied.has(cellKey(lane, row, col));
+}
 function nodeBetweenOnRow(ctx, lane, row, c0, c1) {
-  for (let c = c0; c <= c1; c++) if (ctx.occupied.has(`${lane}:${row}:${c}`)) return true;
+  for (let c = c0; c <= c1; c++) if (cellOccupied(ctx, lane, row, c)) return true;
   return false;
 }
 function railClear(ctx, col, a, b) {
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  for (const [key2, gr] of ctx.globalRow) {
-    if (gr <= lo || gr >= hi) continue;
-    const i = key2.lastIndexOf(":");
-    const occ = ctx.occupied.get(`${key2.slice(0, i)}:${key2.slice(i + 1)}:${col}`);
+  for (const r of ctx.rows) {
+    if (r.pos <= lo || r.pos >= hi) continue;
+    const occ = occupantAt(ctx, r.lane, r.row, col);
     if (occ !== void 0 && ctx.nodeById.get(occ)?.kind !== "doc") return false;
   }
   return true;
 }
 function columnClear(ctx, col, a, b) {
   const [lo, hi] = a < b ? [a, b] : [b, a];
-  for (const [key2, gr] of ctx.globalRow) {
-    if (gr <= lo || gr >= hi) continue;
-    const i = key2.lastIndexOf(":");
-    if (ctx.occupied.has(`${key2.slice(0, i)}:${key2.slice(i + 1)}:${col}`)) return false;
+  for (const r of ctx.rows) {
+    if (r.pos <= lo || r.pos >= hi) continue;
+    if (cellOccupied(ctx, r.lane, r.row, col)) return false;
   }
   return true;
 }
@@ -3056,7 +3064,7 @@ function planPoolMsg(ctx, e) {
   }
   const face = above ? "top" : "bottom";
   const poolEdge = above ? "bottom" : "top";
-  const belowClear = !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`);
+  const belowClear = !cellOccupied(ctx, v.lane, v.row + 1, v.col);
   const faceOpen = face === "top" || eventBottomOpen(ctx, v.node) && belowClear;
   const enter = faceOpen ? face : "top";
   if ((enter === "top" ? above : !above) && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
@@ -3130,7 +3138,7 @@ function planForward(ctx, e) {
   const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
   const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
   const rowFree = !nodeBetweenOnRow(ctx, v.lane, v.row, u.col + 1, v.col - 1);
-  const rowFreeWide = rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`);
+  const rowFreeWide = rowFree && !cellOccupied(ctx, v.lane, v.row, u.col);
   const k = { ctx, e, u, v, sameRow, gU, gV, rowFree, rowFreeWide };
   for (const pattern of FORWARD_PATTERNS) {
     const plan = pattern(k);
@@ -3179,7 +3187,7 @@ function assocDropToDoc({ ctx, e, u, v, gU, gV, rowFree }) {
   const otherAssoc = ctx.g.edges.some(
     (o) => o.kind === "assoc" && o.id !== e.id && o.to === e.from
   );
-  if (!(gV > gU && v.col > u.col && otherAssoc && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e))) return void 0;
+  if (!(gV > gU && v.col > u.col && otherAssoc && !cellOccupied(ctx, v.lane, v.row, u.col) && rowFree && reserveColRun(ctx, u.col, gU, gV, e))) return void 0;
   noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
   return {
     edgeId: e.id,
@@ -3216,7 +3224,7 @@ function assocRailCoWriter({ ctx, e, u, v, gU, gV }) {
   const coWriterHere = ctx.g.edges.some(
     (other) => other.kind === "assoc" && other.to === e.to && other.from !== e.from && ctx.p.col.get(other.from) === v.col
   );
-  const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
+  const adjacentPeer = occupantAt(ctx, v.lane, v.row, u.col);
   const adjacentFour = v.col === u.col + 1 && adjacentPeer !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to);
   if (!(v.node.kind === "doc" && gV > gU && u.lane === v.lane && u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour && railClear(ctx, v.col, gU, gV))) return void 0;
   const rail = nodeCX(e.to, 48);
@@ -3265,7 +3273,7 @@ function messageDownward({ ctx, e, u, v, gU, gV }) {
       points: verticalLine(e.from, "bottom", e.to, "top")
     };
   }
-  if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && reserveColRun(ctx, u.col, gU, chV, e)) {
+  if (!cellOccupied(ctx, v.lane, v.row, u.col) && reserveColRun(ctx, u.col, gU, chV, e)) {
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
     return {
       edgeId: e.id,
@@ -3281,7 +3289,7 @@ function messageDownward({ ctx, e, u, v, gU, gV }) {
 function messageUpward({ ctx, e, u, v, gU, gV }) {
   if (e.kind !== "msg" || !(gV < gU && topFree(ctx, u))) return void 0;
   const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
-  if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
+  if (!cellOccupied(ctx, v.lane, v.row, u.col) && !(v.row > 0 && cellOccupied(ctx, v.lane, v.row - 1, u.col)) && reserveColRun(ctx, u.col, chV, gU, e)) {
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, "below", gU, u.col);
     return {
       edgeId: e.id,
@@ -3379,7 +3387,7 @@ function gatewayDetourSameRow({ ctx, e, u, v, gU, gV, sameRow, rowFree }) {
   };
 }
 function rise({ ctx, e, u, v, gU, gV, rowFree }) {
-  if (!(ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) && topFree(ctx, u) && rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) && reserveColRun(ctx, u.col, gV, gU, e))) return void 0;
+  if (!(ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) && topFree(ctx, u) && rowFree && !cellOccupied(ctx, v.lane, v.row, u.col) && canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) && reserveColRun(ctx, u.col, gV, gU, e))) return void 0;
   noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
   return {
     edgeId: e.id,
@@ -3418,7 +3426,7 @@ function gatewayNorthRowApproach({ ctx, e, u, v, gU, gV, rowFreeWide }) {
 }
 function gatewayDownward({ ctx, e, u, v, gU, gV, rowFree }) {
   if (!(isGw(u.node) && !e.onSpine && gV > gU)) return void 0;
-  if (!isGw(v.node) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
+  if (!isGw(v.node) && !cellOccupied(ctx, v.lane, v.row, u.col) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
     noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
     return {
       edgeId: e.id,
@@ -3433,7 +3441,7 @@ function gatewayDownward({ ctx, e, u, v, gU, gV, rowFree }) {
     };
   }
   const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
-  if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && reserveColRun(ctx, u.col, gU, chV, e)) {
+  if (!cellOccupied(ctx, v.lane, v.row, u.col) && reserveColRun(ctx, u.col, gU, chV, e)) {
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
     return {
       edgeId: e.id,
@@ -3486,7 +3494,7 @@ function rowApproach({ ctx, e, u, v, gU, gV, sameRow, rowFreeWide }) {
 }
 function adjacentConvergingAssoc({ ctx, e, u, v, gU, gV, sameRow }) {
   const g1 = u.col + 1;
-  const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
+  const adjacentPeer = occupantAt(ctx, v.lane, v.row, u.col);
   if (!(e.kind === "assoc" && !isDocLike(u.node.kind) && v.node.kind === "doc" && u.lane === v.lane && !sameRow && v.col === g1 && adjacentPeer !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to))) return void 0;
   noteRowRun(ctx, v.lane, v.row, gutterScale(v.col), v.col, e);
   noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(v.col), e);
@@ -3591,7 +3599,7 @@ function planIntoTop(ctx, e, u, v, gU) {
   const vRowPos = ctx.globalRow.get(rowKey(v.lane, v.row));
   const fromBelow = gU > vRowPos;
   const chBelowKey = rowKey(v.lane, v.row + 1);
-  const canEnterBottom = fromBelow && ctx.globalChannel.has(chBelowKey) && bottomOutFree(ctx, v, vRowPos) && !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && !needsBottomMessagePort(ctx, v.node.id);
+  const canEnterBottom = fromBelow && ctx.globalChannel.has(chBelowKey) && bottomOutFree(ctx, v, vRowPos) && !cellOccupied(ctx, v.lane, v.row + 1, v.col) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && !needsBottomMessagePort(ctx, v.node.id);
   const farTargetGutter = ctx.optimizeReadability && fromBelow && !canEnterBottom && u.lane === v.lane && u.col < v.col && !nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col);
   const g1 = farTargetGutter ? v.col + 1 : u.col + 1;
   noteLabelNeed(ctx, e, g1);
@@ -3760,7 +3768,7 @@ function planReturn(ctx, e) {
       points: verticalZ(e.from, "top", channelY(v.lane, v.row, t2), e.to, "top")
     };
   }
-  if ((ctx.optimizeReadability || !isGw(u.node)) && e.kind === "seq" && chV < gU && !isAttachedBoundary(u.node) && topFree(ctx, u) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
+  if ((ctx.optimizeReadability || !isGw(u.node)) && e.kind === "seq" && chV < gU && !isAttachedBoundary(u.node) && topFree(ctx, u) && !cellOccupied(ctx, v.lane, v.row, u.col) && !(v.row > 0 && cellOccupied(ctx, v.lane, v.row - 1, u.col)) && reserveColRun(ctx, u.col, chV, gU, e)) {
     const t2 = allocChannel(ctx, v.lane, v.row, v.col, u.col, "below", gU, u.col);
     return {
       edgeId: e.id,
