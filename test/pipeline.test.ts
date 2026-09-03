@@ -1862,6 +1862,66 @@ high -> e`);
   });
 });
 
+describe('fuzz 残余の回帰 (L28)', () => {
+  it('同一始点のストア関連を束ねるとき、同一行の 2 点直線は斜線にしない', () => {
+    // seed 1707: 2 点の直線に始点だけのオフセットが掛かり O-1 になった
+    const src = `pool A[A]
+lane L0[L0]
+  end n0[終了]
+  task n1[検品]
+  mid n2[待機]
+  store n3[台帳]
+  task n4[処理]
+pool B[B]
+lane L1[L1]
+  store n5[別台帳]
+  task n6[確認]
+n0 -> n1
+n2 -> n3
+n3 -> n4
+n4 -> n5
+n5 -> n6
+n2 -> n5: 条件ラベル`;
+    const r = noOracleViolations(src);
+    const direct = r.geometry.edges.find((e) => e.kind === 'assoc' && e.from === 'n2' && e.to === 'n3')!;
+    expect(direct.points).toHaveLength(2);
+    expect(direct.points[0]!.y).toBe(direct.points[1]!.y);
+  });
+
+  it('黒箱プールからの下辺入りは、直下のセルが埋まっていれば同じチャネルを使わない', () => {
+    // seed 784 / 1734: 直下ノードへの上辺降下と列中心で重なった
+    const src = `pool P[自社]
+lane A[上]
+  task a[準備]
+lane L[下]
+  start(message) s[受信]
+  task t[処理]
+  and g[並列]
+  s -> t
+pool BB[外部]
+BB ~> s
+a -.-> g`;
+    const r = noOracleViolations(src);
+    const msg = r.geometry.edges.find((e) => e.kind === 'msg')!;
+    const s = r.geometry.nodes.find((n) => n.id === 's')!;
+    // 下辺(直下に g がいる)ではなく上辺へ入る
+    expect(msg.points.at(-1)!.y).toBeLessThan(s.cy);
+  });
+
+  it('書き手の列へ戻したストアからの戻り辺は W-252 を出さない', () => {
+    // seed 1435: 文書類は時間軸を進めないので列の前後関係を約束しない
+    const src = `pool P[P]
+lane L[L]
+  xor n0[受注]
+  store n1[台帳]
+n0 -> n1
+n1 ~> n0`;
+    const r = compile(src);
+    expect(r.diagnostics.filter((d) => d.code === 'W-252')).toEqual([]);
+    expect(r.diagnostics.filter((d) => d.code.startsWith('O-'))).toEqual([]);
+  });
+});
+
 describe('P0 文書再掲 (C-66)', () => {
   const chain = (n: number) => Array.from({ length: n }, (_, i) => `  task t${i}[工程${i}]`).join('\n') +
     '\n' + Array.from({ length: n - 1 }, (_, i) => `t${i} -> t${i + 1}`).join('\n');

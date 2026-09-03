@@ -2423,7 +2423,8 @@ function bundleSameOrigin(ctx, plans) {
     list.push(plan);
     groups.set(key2, list);
   }
-  for (const group2 of groups.values()) {
+  for (const raw of groups.values()) {
+    const group2 = raw.filter((plan) => plan.points.length >= 3);
     if (group2.length < 2) continue;
     if (group2[0]?.fromSide !== "right") continue;
     if (!group2.every((plan) => ctx.nodeById.get(edgeById.get(plan.edgeId).to)?.kind === "store")) continue;
@@ -3638,7 +3639,8 @@ function planPoolMsg(ctx, e) {
   }
   const face = above ? "top" : "bottom";
   const poolEdge = above ? "bottom" : "top";
-  const faceOpen = face === "top" || eventBottomOpen(ctx, v.node);
+  const belowClear = !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`);
+  const faceOpen = face === "top" || eventBottomOpen(ctx, v.node) && belowClear;
   const enter = faceOpen ? face : "top";
   if ((enter === "top" ? above : !above) && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
     return {
@@ -6668,8 +6670,10 @@ function compile(source, opts = {}) {
   const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
   const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
   const poolOfNode = (id) => poolOfLane.get(laneOfNode.get(id) ?? "");
+  const kindOf = new Map(normalized.nodes.map((n) => [n.id, n.kind]));
   for (const e of normalized.edges) {
     if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
+    if (isDocLike(kindOf.get(e.from) ?? "task") || isDocLike(kindOf.get(e.to) ?? "task")) continue;
     if (e.isReturn && placement.col.get(e.to) >= placement.col.get(e.from)) {
       diags.push({
         level: "warning",

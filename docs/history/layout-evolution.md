@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L27
+# Layout Evolution, L1–L28
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -214,6 +214,12 @@ Outcome: invoice_reception and delivery_acceptance draw the second branch one co
 ## L27 — Self-review of L20–L26 (2026-09-03)
 
 A review of the day's changes listed five behavioural gaps and seven inconsistencies; all were closed without changing any corpus diagram. A same-column message from a task lost its straight form whenever a second message left the same face, because a two-point line is never slotted; same-source messages may share a trunk (S-32) and same-target messages may converge (S-91), so those no longer count against the straight form, and a task now fans out as one trunk that splits in the corridor. The ladder order of entry slots was only a tiebreak behind the peer column and is now primary among corridor runs. A vertical message exit no longer coexists with a sequence return leaving the same face (which is never slotted). The right-exit stubs of the fallback patterns are registered alongside the S-57 side stubs, and corridor clearing runs after the document moves that could undo it. Read-only documents keep row 0 in lanes without process nodes, the stacked-branch separation may try every pair, the repetition distance uses the message-aligned provisional columns, and a start that itself sends a message is not pulled past its receiver. The specification moved to v1.4 and `repeatOf` to the normalized node type.
+
+## L28 — Close the residual fuzz violations (2026-09-03)
+
+Four seeds of the 2,000-seed development fuzz had failed since v0.2.19 and were carried as known defects. Each had a distinct cause. Bundling same-origin store associations offset only the first point of a two-point same-row association, which turned it into a diagonal (O-1); two-point lines are now left out of the bundle. A black-box pool message entering an event's south vertex through the channel below did not check the cell directly below, so it overlapped the channel-to-north descent of the node there (O-6); the south entry now requires that cell to be empty, as S-56 already does for other vertex entries. And the W-252 safety net (a return edge placed forward in time) fired for a store that placement had deliberately returned to its writer's column; documents are state (S-73), so returns touching a document-like node are exempt.
+
+Outcome: 2,000 seeds × 2 orientations with zero violations for the first time; all corpus diagrams byte-identical.
 
 ## Open items retained from the loops
 

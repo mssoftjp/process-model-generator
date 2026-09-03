@@ -278,7 +278,9 @@ function bundleSameOrigin(ctx: Ctx, plans: EdgePlan[]): void {
     list.push(plan);
     groups.set(key, list);
   }
-  for (const group of groups.values()) {
+  for (const raw of groups.values()) {
+    // 2 点の直線(S-55 の同一行関連)は始点だけをずらすと斜線になるので束ねない
+    const group = raw.filter((plan) => plan.points.length >= 3);
     if (group.length < 2) continue;
     if (group[0]?.fromSide !== 'right') continue;
     if (!group.every((plan) => ctx.nodeById.get(edgeById.get(plan.edgeId)!.to)?.kind === 'store')) continue;
@@ -1802,7 +1804,10 @@ function planPoolMsg(ctx: Ctx, e: NormEdge): EdgePlan {
   }
   const face: PortSide = above ? 'top' : 'bottom';
   const poolEdge = above ? 'bottom' : 'top';
-  const faceOpen = face === 'top' || eventBottomOpen(ctx, v.node);
+  // 下辺入りは直下のチャネルを使う。直下のセルにノードがいると、そのノードへの上辺降下と
+  // 同じ列中心で重なる(planIntoTop の canEnterBottom と同じ条件)
+  const belowClear = !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`);
+  const faceOpen = face === 'top' || (eventBottomOpen(ctx, v.node) && belowClear);
   const enter: PortSide = faceOpen ? face : 'top';
   if ((enter === 'top' ? above : !above) && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
     return {

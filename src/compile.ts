@@ -17,6 +17,7 @@ import { diagnosePageBudget } from './page-budget.ts';
 import { improveRouting } from './sift-order.ts';
 import { improveDataAssociations, visualAppearancePenalty } from './oarsp.ts';
 import { renderSvg } from './svg.ts';
+import { isDocLike } from './types.ts';
 import type { CompileOptions, CompileResult, Diagnostic, Geometry, Orientation, RoutePlan } from './types.ts';
 
 export class CompileError extends Error {
@@ -139,8 +140,12 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
   const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
   const poolOfNode = (id: string) => poolOfLane.get(laneOfNode.get(id) ?? '');
+  // 文書類は状態であり時間軸を進めない(S-73)。書き手の列へ戻す配置(S-13)があるため、
+  // 文書類を端点に持つ戻り辺は列の前後関係を約束しない。
+  const kindOf = new Map(normalized.nodes.map((n) => [n.id, n.kind]));
   for (const e of normalized.edges) {
     if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
+    if (isDocLike(kindOf.get(e.from) ?? 'task') || isDocLike(kindOf.get(e.to) ?? 'task')) continue;
     if (e.isReturn && placement.col.get(e.to)! >= placement.col.get(e.from)!) {
       diags.push({
         level: 'warning', code: 'W-252',
