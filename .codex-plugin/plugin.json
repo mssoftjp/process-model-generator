@@ -1,6 +1,6 @@
 {
   "name": "process-model-generator",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "description": "Translate business descriptions, .flow files, and BPMN XML into validated process models.",
   "author": {
     "name": "Musashino Software"
