@@ -2505,6 +2505,16 @@ var nodeCY = (id, offset = 0) => ({ t: "nodeCY", id, offset });
 var channelY = (lane, row, run) => ({ t: "channel", lane, row, run });
 var poolChannelY = (gap, run) => ({ t: "poolChannel", gap, run });
 var rowMidY = (lane, row) => ({ t: "rowMid", lane, row });
+var verticalLine = (from, fromSide, to, toSide, off = 0) => [
+  { x: nodeCX(from, off), y: portY(from, fromSide) },
+  { x: nodeCX(to, off), y: portY(to, toSide) }
+];
+var verticalZ = (from, fromSide, y, to, toSide) => [
+  { x: nodeCX(from), y: portY(from, fromSide) },
+  { x: nodeCX(from), y },
+  { x: nodeCX(to), y },
+  { x: nodeCX(to), y: portY(to, toSide) }
+];
 
 // src/route/predicates.ts
 var isGw = (n) => isGatewayKind(n.kind);
@@ -2770,10 +2780,7 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
       fromSide,
       toSide,
       pattern: "drop",
-      points: [
-        { x: nodeCX(e.from, off), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.to, off), y: portY(e.to, toSide) }
-      ]
+      points: verticalLine(e.from, fromSide, e.to, toSide, off)
     };
   }
   const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
@@ -2782,12 +2789,7 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
     fromSide,
     toSide,
     pattern: "channel-approach",
-    points: [
-      { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-      { x: nodeCX(e.from), y: poolChannelY(gap, run) },
-      { x: nodeCX(e.to), y: poolChannelY(gap, run) },
-      { x: nodeCX(e.to), y: portY(e.to, toSide) }
-    ]
+    points: verticalZ(e.from, fromSide, poolChannelY(gap, run), e.to, toSide)
   };
 }
 function planIntoBoundary(ctx, e, u, v, gU, gV) {
@@ -2830,12 +2832,7 @@ function planIntoBoundary(ctx, e, u, v, gU, gV) {
         fromSide,
         toSide,
         pattern: "channel-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-          { x: nodeCX(e.from), y: poolChannelY(gap, run) },
-          { x: nodeCX(e.to), y: poolChannelY(gap, run) },
-          { x: nodeCX(e.to), y: portY(e.to, toSide) }
-        ]
+        points: verticalZ(e.from, fromSide, poolChannelY(gap, run), e.to, toSide)
       };
     }
     if (!down) return void 0;
@@ -2849,12 +2846,7 @@ function planIntoBoundary(ctx, e, u, v, gU, gV) {
       fromSide,
       toSide,
       pattern: "channel-approach",
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
-        { x: nodeCX(e.to), y: portY(e.to, toSide) }
-      ]
+      points: verticalZ(e.from, fromSide, channelY(v.lane, v.row, tCh2), e.to, toSide)
     };
   };
   const z = straightIn();
@@ -3139,368 +3131,382 @@ function planForward(ctx, e) {
   const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
   const rowFree = !nodeBetweenOnRow(ctx, v.lane, v.row, u.col + 1, v.col - 1);
   const rowFreeWide = rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`);
-  if (e.kind === "assoc") {
-    if (u.col === v.col && gV > gU && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
-      markExclusiveColRun(ctx, u.col);
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "top",
-        pattern: "drop",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.to), y: portY(e.to, "top") }
-        ]
-      };
-    }
-    if (u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) && faceQuiet(ctx, v.node.id, "bottom", e) && bottomOutFree(ctx, v, gV) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
-    // 未計画なら同一行の書き手(左入り)だけを許す
-    !ctx.g.edges.some((o) => {
-      if (o.id === e.id || o.kind !== "assoc" || o.to !== u.node.id) return false;
-      const done = ctx.planned.get(o.id);
-      if (done) return done.toSide === "top";
-      const w = ctx.nodeById.get(o.from);
-      return !w || w.lane !== u.lane || ctx.p.row.get(w.id) !== u.row;
-    }) && reserveColRun(ctx, u.col, gV, gU, e)) {
-      markExclusiveColRun(ctx, u.col);
-      return {
-        edgeId: e.id,
-        fromSide: "top",
-        toSide: "bottom",
-        pattern: "drop",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "top") },
-          { x: nodeCX(e.to), y: portY(e.to, "bottom") }
-        ]
-      };
-    }
-    if (!isDocLike(v.node.kind)) {
-      return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
-    }
-    const otherAssoc = ctx.g.edges.some(
-      (o) => o.kind === "assoc" && o.id !== e.id && o.to === e.from
-    );
-    if (gV > gU && v.col > u.col && otherAssoc && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
-      noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "left",
-        pattern: "drop",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
-          { x: portX(e.to, "left"), y: portY(e.to, "left") }
-        ]
-      };
-    }
-    if (v.node.kind === "doc" && u.col === v.col && gV > gU && u.node.kind === "task" && railClear(ctx, u.col, gU, gV) && !ctx.g.edges.some((o) => o.id !== e.id && o.to === u.node.id && o.kind !== "seq")) {
-      const rail = nodeCX(e.from, 28);
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "right",
-        pattern: "row-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.from), y: portStubY(e.from, "bottom") },
-          { x: rail, y: portStubY(e.from, "bottom") },
-          { x: rail, y: portY(e.to, "right") },
-          { x: portX(e.to, "right"), y: portY(e.to, "right") }
-        ]
-      };
-    }
-    const coWriterHere = ctx.g.edges.some(
-      (other) => other.kind === "assoc" && other.to === e.to && other.from !== e.from && ctx.p.col.get(other.from) === v.col
-    );
-    const adjacentPeer2 = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
-    const adjacentFour = v.col === u.col + 1 && adjacentPeer2 !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer2 && other.to === e.to);
-    if (v.node.kind === "doc" && gV > gU && u.lane === v.lane && u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour && railClear(ctx, v.col, gU, gV)) {
-      const rail = nodeCX(e.to, 48);
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "right",
-        pattern: "row-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.from), y: portStubY(e.from, "bottom") },
-          { x: rail, y: portStubY(e.from, "bottom") },
-          { x: rail, y: portY(e.to, "right") },
-          { x: portX(e.to, "right"), y: portY(e.to, "right") }
-        ]
-      };
-    }
-    if (!sameRow) {
-      const l = planRowThenColumn(ctx, e, u, v, gU, gV);
-      if (l) return l;
-    }
+  const k = { ctx, e, u, v, sameRow, gU, gV, rowFree, rowFreeWide };
+  for (const pattern of FORWARD_PATTERNS) {
+    const plan = pattern(k);
+    if (plan) return plan;
   }
-  if (e.kind === "msg" && isAttachedBoundary(v.node)) {
-    const b = planIntoBoundary(ctx, e, u, v, gU, gV);
-    if (b) return b;
+  return channelApproach(k);
+}
+function assocDropStraight({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "assoc") return void 0;
+  if (!(u.col === v.col && gV > gU && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e))) return void 0;
+  markExclusiveColRun(ctx, u.col);
+  return {
+    edgeId: e.id,
+    fromSide: "bottom",
+    toSide: "top",
+    pattern: "drop",
+    points: verticalLine(e.from, "bottom", e.to, "top")
+  };
+}
+function assocRiseStraight({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "assoc") return void 0;
+  if (!(u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) && faceQuiet(ctx, v.node.id, "bottom", e) && bottomOutFree(ctx, v, gV) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
+  // 未計画なら同一行の書き手(左入り)だけを許す
+  !ctx.g.edges.some((o) => {
+    if (o.id === e.id || o.kind !== "assoc" || o.to !== u.node.id) return false;
+    const done = ctx.planned.get(o.id);
+    if (done) return done.toSide === "top";
+    const w = ctx.nodeById.get(o.from);
+    return !w || w.lane !== u.lane || ctx.p.row.get(w.id) !== u.row;
+  }) && reserveColRun(ctx, u.col, gV, gU, e))) return void 0;
+  markExclusiveColRun(ctx, u.col);
+  return {
+    edgeId: e.id,
+    fromSide: "top",
+    toSide: "bottom",
+    pattern: "drop",
+    points: verticalLine(e.from, "top", e.to, "bottom")
+  };
+}
+function assocIntoNonDoc({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "assoc" || isDocLike(v.node.kind)) return void 0;
+  return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
+}
+function assocDropToDoc({ ctx, e, u, v, gU, gV, rowFree }) {
+  if (e.kind !== "assoc") return void 0;
+  const otherAssoc = ctx.g.edges.some(
+    (o) => o.kind === "assoc" && o.id !== e.id && o.to === e.from
+  );
+  if (!(gV > gU && v.col > u.col && otherAssoc && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e))) return void 0;
+  noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
+  return {
+    edgeId: e.id,
+    fromSide: "bottom",
+    toSide: "left",
+    pattern: "drop",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, "bottom") },
+      { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
+      { x: portX(e.to, "left"), y: portY(e.to, "left") }
+    ]
+  };
+}
+function assocRailBelow({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "assoc") return void 0;
+  if (!(v.node.kind === "doc" && u.col === v.col && gV > gU && u.node.kind === "task" && railClear(ctx, u.col, gU, gV) && !ctx.g.edges.some((o) => o.id !== e.id && o.to === u.node.id && o.kind !== "seq"))) return void 0;
+  const rail = nodeCX(e.from, 28);
+  return {
+    edgeId: e.id,
+    fromSide: "bottom",
+    toSide: "right",
+    pattern: "row-approach",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, "bottom") },
+      { x: nodeCX(e.from), y: portStubY(e.from, "bottom") },
+      { x: rail, y: portStubY(e.from, "bottom") },
+      { x: rail, y: portY(e.to, "right") },
+      { x: portX(e.to, "right"), y: portY(e.to, "right") }
+    ]
+  };
+}
+function assocRailCoWriter({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "assoc") return void 0;
+  const coWriterHere = ctx.g.edges.some(
+    (other) => other.kind === "assoc" && other.to === e.to && other.from !== e.from && ctx.p.col.get(other.from) === v.col
+  );
+  const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
+  const adjacentFour = v.col === u.col + 1 && adjacentPeer !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to);
+  if (!(v.node.kind === "doc" && gV > gU && u.lane === v.lane && u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour && railClear(ctx, v.col, gU, gV))) return void 0;
+  const rail = nodeCX(e.to, 48);
+  return {
+    edgeId: e.id,
+    fromSide: "bottom",
+    toSide: "right",
+    pattern: "row-approach",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, "bottom") },
+      { x: nodeCX(e.from), y: portStubY(e.from, "bottom") },
+      { x: rail, y: portStubY(e.from, "bottom") },
+      { x: rail, y: portY(e.to, "right") },
+      { x: portX(e.to, "right"), y: portY(e.to, "right") }
+    ]
+  };
+}
+function assocRowThenColumn({ ctx, e, u, v, gU, gV, sameRow }) {
+  if (e.kind !== "assoc" || sameRow) return void 0;
+  return planRowThenColumn(ctx, e, u, v, gU, gV);
+}
+function messageIntoBoundary({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "msg" || !isAttachedBoundary(v.node)) return void 0;
+  return planIntoBoundary(ctx, e, u, v, gU, gV);
+}
+function messageAcrossPools({ ctx, e, u, v }) {
+  if (e.kind !== "msg") return void 0;
+  const poolPair = poolPairIndices(ctx, u, v);
+  if (poolPair && Math.abs(poolPair[0] - poolPair[1]) > 1) {
+    return planAcrossPoolExterior(ctx, e, u, v, poolPair[0], poolPair[1]);
   }
-  if (e.kind === "msg") {
-    const poolPair = poolPairIndices(ctx, u, v);
-    if (poolPair && Math.abs(poolPair[0] - poolPair[1]) > 1) {
-      return planAcrossPoolExterior(ctx, e, u, v, poolPair[0], poolPair[1]);
-    }
-    const poolGap = adjacentPoolGap(ctx, u, v);
-    if (poolGap !== void 0) return planAcrossPoolGap(ctx, e, u, v, poolGap);
-    const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
-    if (gV > gU && bottomFree(u.node)) {
-      if (u.col === v.col && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
-        markExclusiveColRun(ctx, u.col);
-        return {
-          edgeId: e.id,
-          fromSide: "bottom",
-          toSide: "top",
-          pattern: "drop",
-          points: [
-            { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-            { x: nodeCX(e.to), y: portY(e.to, "top") }
-          ]
-        };
-      }
-      if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && reserveColRun(ctx, u.col, gU, chV, e)) {
-        const tCh2 = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
-        return {
-          edgeId: e.id,
-          fromSide: "bottom",
-          toSide: "top",
-          pattern: "channel-approach",
-          points: [
-            { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-            { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
-            { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
-            { x: nodeCX(e.to), y: portY(e.to, "top") }
-          ]
-        };
-      }
-      if (hasSequenceOut(ctx, e.from)) return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
-    }
-    if (gV < gU && topFree(ctx, u)) {
-      if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
-        const tCh2 = allocChannel(ctx, v.lane, v.row, u.col, v.col, "below", gU, u.col);
-        return {
-          edgeId: e.id,
-          fromSide: "top",
-          toSide: "top",
-          pattern: "channel-approach",
-          points: [
-            { x: nodeCX(e.from), y: portY(e.from, "top") },
-            { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
-            { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
-            { x: nodeCX(e.to), y: portY(e.to, "top") }
-          ]
-        };
-      }
-      const detour = planMessageFromTopViaGutter(ctx, e, u, v, gU, chV);
-      if (detour) return detour;
-    }
-    if (bottomFree(u.node) && hasSequenceOut(ctx, e.from)) {
-      return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
-    }
-    return planIntoTop(ctx, e, u, v, gU);
-  }
-  if (sameRow && rowFree && isAttachedBoundary(u.node) && u.col < v.col && (e.kind === "seq" || e.kind === "assoc")) {
-    const gx = v.col;
-    const run = allocGutter(ctx, gx, "entry", gU, gV);
-    const dstY = e.kind === "seq" ? portY(e.to, "left") : nodeCY(e.to, -10);
-    noteLabelNeed(ctx, e, u.col + 1);
-    noteRowRun(ctx, v.lane, v.row, gutterScale(gx), v.col, e);
+  const poolGap = adjacentPoolGap(ctx, u, v);
+  if (poolGap !== void 0) return planAcrossPoolGap(ctx, e, u, v, poolGap);
+  return void 0;
+}
+function messageDownward({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "msg" || !(gV > gU && bottomFree(u.node))) return void 0;
+  const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  if (u.col === v.col && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
+    markExclusiveColRun(ctx, u.col);
     return {
       edgeId: e.id,
-      fromSide: "right",
-      toSide: "left",
-      pattern: "row-approach",
-      points: [
-        { x: portX(e.from, "right"), y: portY(e.from, "right") },
-        { x: gutterX(gx, "entry", run), y: portY(e.from, "right") },
-        { x: gutterX(gx, "entry", run), y: dstY },
-        { x: portX(e.to, "left"), y: dstY }
-      ]
+      fromSide: "bottom",
+      toSide: "top",
+      pattern: "drop",
+      points: verticalLine(e.from, "bottom", e.to, "top")
     };
   }
-  if (sameRow && rowFree && e.kind === "seq") {
-    noteLabelNeed(ctx, e, u.col + 1);
-    noteRowRun(ctx, u.lane, u.row, u.col, v.col, e);
+  if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && reserveColRun(ctx, u.col, gU, chV, e)) {
+    const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
     return {
       edgeId: e.id,
-      fromSide: "right",
-      toSide: "left",
-      pattern: "direct",
-      points: [
-        { x: portX(e.from, "right"), y: portY(e.from, "right") },
-        { x: portX(e.to, "left"), y: portY(e.to, "left") }
-      ]
+      fromSide: "bottom",
+      toSide: "top",
+      pattern: "channel-approach",
+      points: verticalZ(e.from, "bottom", channelY(v.lane, v.row, tCh), e.to, "top")
     };
   }
-  if (sameRow && rowFree && e.kind === "assoc" && u.col < v.col) {
-    noteLabelNeed(ctx, e, u.col + 1);
-    return {
-      edgeId: e.id,
-      fromSide: "right",
-      toSide: "left",
-      pattern: "direct",
-      points: [
-        { x: portX(e.from, "right"), y: nodeCY(e.from, -10) },
-        { x: portX(e.to, "left"), y: nodeCY(e.to, -10) }
-      ]
-    };
-  }
-  if (ctx.optimizeReadability && e.kind === "seq" && isGw(u.node) && !e.onSpine && sameRow && v.col > u.col && !rowFree) {
-    const useBelow = alternativeBelow(ctx, u);
-    const channelRow = useBelow ? u.row + 1 : u.row;
-    const channelPos = ctx.globalChannel.get(rowKey(u.lane, channelRow));
-    const sourceFree = useBelow ? true : topFree(ctx, u);
-    const targetFree = useBelow ? bottomFree(v.node) && noDownwardOut(ctx, v, gV) && !needsBottomMessagePort(ctx, v.node.id) : true;
-    if (channelPos !== void 0 && sourceFree && targetFree && reserveColRun(ctx, u.col, gU, channelPos, e) && reserveColRun(ctx, v.col, gV, channelPos, e)) {
-      const side = useBelow ? "bottom" : "top";
-      const tCh2 = allocChannel(
-        ctx,
-        u.lane,
-        channelRow,
-        u.col,
-        v.col,
-        useBelow ? "above" : "below",
-        gU,
-        u.col
-      );
-      return {
-        edgeId: e.id,
-        fromSide: side,
-        toSide: side,
-        pattern: "channel-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, side) },
-          { x: nodeCX(e.from), y: channelY(u.lane, channelRow, tCh2) },
-          { x: nodeCX(e.to), y: channelY(u.lane, channelRow, tCh2) },
-          { x: nodeCX(e.to), y: portY(e.to, side) }
-        ]
-      };
-    }
-  }
-  if (ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) && topFree(ctx, u) && rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) && reserveColRun(ctx, u.col, gV, gU, e)) {
-    noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
+  if (hasSequenceOut(ctx, e.from)) return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
+  return void 0;
+}
+function messageUpward({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "msg" || !(gV < gU && topFree(ctx, u))) return void 0;
+  const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
+    const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, "below", gU, u.col);
     return {
       edgeId: e.id,
       fromSide: "top",
+      toSide: "top",
+      pattern: "channel-approach",
+      points: verticalZ(e.from, "top", channelY(v.lane, v.row, tCh), e.to, "top")
+    };
+  }
+  return planMessageFromTopViaGutter(ctx, e, u, v, gU, chV);
+}
+function messageBottomStub({ ctx, e, u, v, gU }) {
+  if (e.kind !== "msg" || !(bottomFree(u.node) && hasSequenceOut(ctx, e.from))) return void 0;
+  const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
+}
+function messageIntoTop({ ctx, e, u, v, gU }) {
+  if (e.kind !== "msg") return void 0;
+  return planIntoTop(ctx, e, u, v, gU);
+}
+function boundarySameRow({ ctx, e, u, v, gU, gV, sameRow, rowFree }) {
+  if (!(sameRow && rowFree && isAttachedBoundary(u.node) && u.col < v.col && (e.kind === "seq" || e.kind === "assoc"))) return void 0;
+  const gx = v.col;
+  const run = allocGutter(ctx, gx, "entry", gU, gV);
+  const dstY = e.kind === "seq" ? portY(e.to, "left") : nodeCY(e.to, -10);
+  noteLabelNeed(ctx, e, u.col + 1);
+  noteRowRun(ctx, v.lane, v.row, gutterScale(gx), v.col, e);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "left",
+    pattern: "row-approach",
+    points: [
+      { x: portX(e.from, "right"), y: portY(e.from, "right") },
+      { x: gutterX(gx, "entry", run), y: portY(e.from, "right") },
+      { x: gutterX(gx, "entry", run), y: dstY },
+      { x: portX(e.to, "left"), y: dstY }
+    ]
+  };
+}
+function directSequence({ ctx, e, u, v, sameRow, rowFree }) {
+  if (!(sameRow && rowFree && e.kind === "seq")) return void 0;
+  noteLabelNeed(ctx, e, u.col + 1);
+  noteRowRun(ctx, u.lane, u.row, u.col, v.col, e);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "left",
+    pattern: "direct",
+    points: [
+      { x: portX(e.from, "right"), y: portY(e.from, "right") },
+      { x: portX(e.to, "left"), y: portY(e.to, "left") }
+    ]
+  };
+}
+function directAssoc({ ctx, e, u, v, sameRow, rowFree }) {
+  if (!(sameRow && rowFree && e.kind === "assoc" && u.col < v.col)) return void 0;
+  noteLabelNeed(ctx, e, u.col + 1);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "left",
+    pattern: "direct",
+    points: [
+      { x: portX(e.from, "right"), y: nodeCY(e.from, -10) },
+      { x: portX(e.to, "left"), y: nodeCY(e.to, -10) }
+    ]
+  };
+}
+function gatewayDetourSameRow({ ctx, e, u, v, gU, gV, sameRow, rowFree }) {
+  if (!(ctx.optimizeReadability && e.kind === "seq" && isGw(u.node) && !e.onSpine && sameRow && v.col > u.col && !rowFree)) return void 0;
+  const useBelow = alternativeBelow(ctx, u);
+  const channelRow = useBelow ? u.row + 1 : u.row;
+  const channelPos = ctx.globalChannel.get(rowKey(u.lane, channelRow));
+  const sourceFree = useBelow ? true : topFree(ctx, u);
+  const targetFree = useBelow ? bottomFree(v.node) && noDownwardOut(ctx, v, gV) && !needsBottomMessagePort(ctx, v.node.id) : true;
+  if (!(channelPos !== void 0 && sourceFree && targetFree && reserveColRun(ctx, u.col, gU, channelPos, e) && reserveColRun(ctx, v.col, gV, channelPos, e))) return void 0;
+  const side = useBelow ? "bottom" : "top";
+  const tCh = allocChannel(
+    ctx,
+    u.lane,
+    channelRow,
+    u.col,
+    v.col,
+    useBelow ? "above" : "below",
+    gU,
+    u.col
+  );
+  return {
+    edgeId: e.id,
+    fromSide: side,
+    toSide: side,
+    pattern: "channel-approach",
+    points: verticalZ(e.from, side, channelY(u.lane, channelRow, tCh), e.to, side)
+  };
+}
+function rise({ ctx, e, u, v, gU, gV, rowFree }) {
+  if (!(ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) && topFree(ctx, u) && rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) && reserveColRun(ctx, u.col, gV, gU, e))) return void 0;
+  noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
+  return {
+    edgeId: e.id,
+    fromSide: "top",
+    toSide: "left",
+    pattern: "rise",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, "top") },
+      { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
+      { x: portX(e.to, "left"), y: portY(e.to, "left") }
+    ]
+  };
+}
+function gatewayNorthRowApproach({ ctx, e, u, v, gU, gV, rowFreeWide }) {
+  if (!(ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && topFree(ctx, u) && rowFreeWide)) return void 0;
+  const chU = ctx.globalChannel.get(rowKey(u.lane, u.row));
+  if (!(canReserveRowRun(ctx, v.lane, v.row, gutterScale(u.col + 1), v.col, e.from, e.to) && reserveColRun(ctx, u.col, chU, gU, e))) return void 0;
+  const g1 = u.col + 1;
+  noteLabelNeed(ctx, e, g1);
+  noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
+  const tSrc = allocChannel(ctx, u.lane, u.row, u.col, g1 - 0.5, "below", gU, u.col);
+  const r1 = allocGutter(ctx, g1, "exit", chU, gV);
+  return {
+    edgeId: e.id,
+    fromSide: "top",
+    toSide: "left",
+    pattern: "row-approach",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, "top") },
+      { x: nodeCX(e.from), y: channelY(u.lane, u.row, tSrc) },
+      { x: gutterX(g1, "exit", r1), y: channelY(u.lane, u.row, tSrc) },
+      { x: gutterX(g1, "exit", r1), y: rowMidY(v.lane, v.row) },
+      { x: portX(e.to, "left"), y: portY(e.to, "left") }
+    ]
+  };
+}
+function gatewayDownward({ ctx, e, u, v, gU, gV, rowFree }) {
+  if (!(isGw(u.node) && !e.onSpine && gV > gU)) return void 0;
+  if (!isGw(v.node) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
+    noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
+    return {
+      edgeId: e.id,
+      fromSide: "bottom",
       toSide: "left",
-      pattern: "rise",
+      pattern: "drop",
       points: [
-        { x: nodeCX(e.from), y: portY(e.from, "top") },
+        { x: nodeCX(e.from), y: portY(e.from, "bottom") },
         { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
         { x: portX(e.to, "left"), y: portY(e.to, "left") }
       ]
     };
   }
-  if (ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && topFree(ctx, u) && rowFreeWide) {
-    const chU = ctx.globalChannel.get(rowKey(u.lane, u.row));
-    if (canReserveRowRun(ctx, v.lane, v.row, gutterScale(u.col + 1), v.col, e.from, e.to) && reserveColRun(ctx, u.col, chU, gU, e)) {
-      const g12 = u.col + 1;
-      noteLabelNeed(ctx, e, g12);
-      noteRowRun(ctx, v.lane, v.row, gutterScale(g12), v.col, e);
-      const tSrc = allocChannel(ctx, u.lane, u.row, u.col, g12 - 0.5, "below", gU, u.col);
-      const r12 = allocGutter(ctx, g12, "exit", chU, gV);
-      return {
-        edgeId: e.id,
-        fromSide: "top",
-        toSide: "left",
-        pattern: "row-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "top") },
-          { x: nodeCX(e.from), y: channelY(u.lane, u.row, tSrc) },
-          { x: gutterX(g12, "exit", r12), y: channelY(u.lane, u.row, tSrc) },
-          { x: gutterX(g12, "exit", r12), y: rowMidY(v.lane, v.row) },
-          { x: portX(e.to, "left"), y: portY(e.to, "left") }
-        ]
-      };
-    }
+  const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && reserveColRun(ctx, u.col, gU, chV, e)) {
+    const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
+    return {
+      edgeId: e.id,
+      fromSide: "bottom",
+      toSide: "top",
+      pattern: "channel-approach",
+      points: verticalZ(e.from, "bottom", channelY(v.lane, v.row, tCh), e.to, "top")
+    };
   }
-  if (isGw(u.node) && !e.onSpine && gV > gU) {
-    if (!isGw(v.node) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
-      noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "left",
-        pattern: "drop",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
-          { x: portX(e.to, "left"), y: portY(e.to, "left") }
-        ]
-      };
-    }
-    const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
-    if (!ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && reserveColRun(ctx, u.col, gU, chV, e)) {
-      const tCh2 = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "top",
-        pattern: "channel-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
-          { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
-          { x: nodeCX(e.to), y: portY(e.to, "top") }
-        ]
-      };
-    }
-    return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
-  }
-  if (!sameRow && isGw(v.node)) {
-    const l = planRowThenColumn(ctx, e, u, v, gU, gV);
-    if (l) return l;
-    if (!westFree(ctx, v, e)) return planIntoTop(ctx, e, u, v, gU);
-  }
-  if (!sameRow && isEventKind(v.node.kind) && gU > gV && eventBottomOpen(ctx, v.node)) {
-    return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
-  }
+  return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
+}
+function intoGatewayFromOtherRow({ ctx, e, u, v, gU, gV, sameRow }) {
+  if (!(!sameRow && isGw(v.node))) return void 0;
+  const l = planRowThenColumn(ctx, e, u, v, gU, gV);
+  if (l) return l;
+  if (!westFree(ctx, v, e)) return planIntoTop(ctx, e, u, v, gU);
+  return void 0;
+}
+function intoEventFromBelow({ ctx, e, u, v, gU, gV, sameRow }) {
+  if (!(!sameRow && isEventKind(v.node.kind) && gU > gV && eventBottomOpen(ctx, v.node))) return void 0;
+  return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
+}
+function noteExitLabel({ ctx, e, u }) {
+  noteLabelNeed(ctx, e, u.col + 1);
+  return void 0;
+}
+function rowApproach({ ctx, e, u, v, gU, gV, sameRow, rowFreeWide }) {
   const g1 = u.col + 1;
-  noteLabelNeed(ctx, e, g1);
-  const srcY = fallbackRightY(e, e.from);
   const boundaryExit = e.kind === "seq" && isAttachedBoundary(u.node);
   const boundaryOffset = u.node.boundarySide === "top" ? -100 : 100;
-  if (rowFreeWide && !sameRow && u.col < v.col && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to) && (e.kind !== "seq" || boundaryExit || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && (!boundaryExit || reserveStubRun(ctx, u.lane, u.row, boundaryOffset, u.col, gutterScale(g1), e))) {
-    if (boundaryExit) {
-    } else if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
-    else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
-    noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
-    const run = allocGutter(ctx, g1, "exit", gU, gV);
-    return {
-      edgeId: e.id,
-      fromSide: "right",
-      toSide: "left",
-      pattern: "row-approach",
-      points: [
-        { x: portX(e.from, "right"), y: srcY },
-        { x: gutterX(g1, "exit", run), y: srcY },
-        { x: gutterX(g1, "exit", run), y: rowMidY(v.lane, v.row) },
-        { x: portX(e.to, "left"), y: portY(e.to, "left") }
-      ]
-    };
-  }
+  if (!(rowFreeWide && !sameRow && u.col < v.col && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to) && (e.kind !== "seq" || boundaryExit || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && (!boundaryExit || reserveStubRun(ctx, u.lane, u.row, boundaryOffset, u.col, gutterScale(g1), e)))) return void 0;
+  if (boundaryExit) {
+  } else if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
+  noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
+  const run = allocGutter(ctx, g1, "exit", gU, gV);
+  const srcY = fallbackRightY(e, e.from);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "left",
+    pattern: "row-approach",
+    points: [
+      { x: portX(e.from, "right"), y: srcY },
+      { x: gutterX(g1, "exit", run), y: srcY },
+      { x: gutterX(g1, "exit", run), y: rowMidY(v.lane, v.row) },
+      { x: portX(e.to, "left"), y: portY(e.to, "left") }
+    ]
+  };
+}
+function adjacentConvergingAssoc({ ctx, e, u, v, gU, gV, sameRow }) {
+  const g1 = u.col + 1;
   const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
-  if (e.kind === "assoc" && !isDocLike(u.node.kind) && v.node.kind === "doc" && u.lane === v.lane && !sameRow && v.col === g1 && adjacentPeer !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to)) {
-    noteRowRun(ctx, v.lane, v.row, gutterScale(v.col), v.col, e);
-    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(v.col), e);
-    const run = allocGutter(ctx, v.col, "entry", gU, gV);
-    return {
-      edgeId: e.id,
-      fromSide: "right",
-      toSide: "left",
-      pattern: "row-approach",
-      points: [
-        { x: portX(e.from, "right"), y: srcY },
-        { x: gutterX(v.col, "entry", run), y: srcY },
-        { x: gutterX(v.col, "entry", run), y: rowMidY(v.lane, v.row) },
-        { x: portX(e.to, "left"), y: portY(e.to, "left") }
-      ]
-    };
-  }
+  if (!(e.kind === "assoc" && !isDocLike(u.node.kind) && v.node.kind === "doc" && u.lane === v.lane && !sameRow && v.col === g1 && adjacentPeer !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to))) return void 0;
+  noteRowRun(ctx, v.lane, v.row, gutterScale(v.col), v.col, e);
+  noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(v.col), e);
+  const run = allocGutter(ctx, v.col, "entry", gU, gV);
+  const srcY = fallbackRightY(e, e.from);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "left",
+    pattern: "row-approach",
+    points: [
+      { x: portX(e.from, "right"), y: srcY },
+      { x: gutterX(v.col, "entry", run), y: srcY },
+      { x: gutterX(v.col, "entry", run), y: rowMidY(v.lane, v.row) },
+      { x: portX(e.to, "left"), y: portY(e.to, "left") }
+    ]
+  };
+}
+function channelApproach({ ctx, e, u, v, gU, gV }) {
+  const g1 = u.col + 1;
   const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
   const r1 = allocGutter(ctx, g1, "exit", gU, chPos);
   const tCh = allocChannel(ctx, v.lane, v.row, g1 - 0.5, v.col - 0.5, gU < chPos ? "above" : "below", gU, g1 - 0.5);
@@ -3509,6 +3515,7 @@ function planForward(ctx, e) {
   if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
   else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
   noteRowRun(ctx, v.lane, v.row, gutterScale(gv), v.col, e);
+  const srcY = fallbackRightY(e, e.from);
   return {
     edgeId: e.id,
     fromSide: "right",
@@ -3524,6 +3531,33 @@ function planForward(ctx, e) {
     ]
   };
 }
+var FORWARD_PATTERNS = [
+  assocDropStraight,
+  assocRiseStraight,
+  assocIntoNonDoc,
+  assocDropToDoc,
+  assocRailBelow,
+  assocRailCoWriter,
+  assocRowThenColumn,
+  messageIntoBoundary,
+  messageAcrossPools,
+  messageDownward,
+  messageUpward,
+  messageBottomStub,
+  messageIntoTop,
+  boundarySameRow,
+  directSequence,
+  directAssoc,
+  gatewayDetourSameRow,
+  rise,
+  gatewayNorthRowApproach,
+  gatewayDownward,
+  intoGatewayFromOtherRow,
+  intoEventFromBelow,
+  noteExitLabel,
+  rowApproach,
+  adjacentConvergingAssoc
+];
 function planFromBottomViaGutter(ctx, e, u, v, gU, chV) {
   const g1 = u.col + 1;
   noteLabelNeed(ctx, e, g1);
@@ -3683,12 +3717,7 @@ function planReturn(ctx, e) {
           fromSide: sourceSide,
           toSide: targetSide,
           pattern: "return",
-          points: [
-            { x: nodeCX(e.from), y: portY(e.from, sourceSide) },
-            { x: nodeCX(e.from), y: channelY(u.lane, outerRow, t3) },
-            { x: nodeCX(e.to), y: channelY(u.lane, outerRow, t3) },
-            { x: nodeCX(e.to), y: portY(e.to, targetSide) }
-          ]
+          points: verticalZ(e.from, sourceSide, channelY(u.lane, outerRow, t3), e.to, targetSide)
         };
       }
       const rUp2 = allocGutter(ctx, gup2, "exit", gU, outer);
@@ -3728,12 +3757,7 @@ function planReturn(ctx, e) {
       fromSide: "top",
       toSide: "top",
       pattern: "return",
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, "top") },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, t2) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, t2) },
-        { x: nodeCX(e.to), y: portY(e.to, "top") }
-      ]
+      points: verticalZ(e.from, "top", channelY(v.lane, v.row, t2), e.to, "top")
     };
   }
   if ((ctx.optimizeReadability || !isGw(u.node)) && e.kind === "seq" && chV < gU && !isAttachedBoundary(u.node) && topFree(ctx, u) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
@@ -3743,12 +3767,7 @@ function planReturn(ctx, e) {
       fromSide: "top",
       toSide: "top",
       pattern: "return",
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, "top") },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, t2) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, t2) },
-        { x: nodeCX(e.to), y: portY(e.to, "top") }
-      ]
+      points: verticalZ(e.from, "top", channelY(v.lane, v.row, t2), e.to, "top")
     };
   }
   const gup = u.col + 1;

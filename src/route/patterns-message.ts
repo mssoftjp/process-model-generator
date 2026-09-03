@@ -6,7 +6,7 @@ import type {
 } from '../types.ts';
 import { rowKey, cellOf, reserveColRun, canReserveColRun, markExclusiveColRun, gutterScale, reserveStubRun, noteStubRun, fallbackOffset, allocGutter, allocChannel, allocPoolGap, noteLabelNeed, gapOrderConsistent } from './context.ts';
 import type { Ctx, Cell } from './context.ts';
-import { portX, portY, portStubY, gutterX, nodeCX, nodeCY, channelY, poolChannelY } from './symbols.ts';
+import { portX, portY, portStubY, gutterX, nodeCX, nodeCY, channelY, poolChannelY, verticalLine, verticalZ } from './symbols.ts';
 import { isGw, blackboxLane, bottomFree, eventLabelMovedUp, eventHasBottomOut, eventBottomOpen, topFree, faceQuiet, topUsersSlottable, bottomOutFree, fallbackRightY, adjacentPoolGap, poolPairIndices } from './predicates.ts';
 
 /**
@@ -169,21 +169,13 @@ function planAcrossPoolGapZ(
     const off = pair === undefined ? 0 : pairPlan ? PAIR : -PAIR;
     return {
       edgeId: e.id, fromSide, toSide, pattern: 'drop',
-      points: [
-        { x: nodeCX(e.from, off), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.to, off), y: portY(e.to, toSide) },
-      ],
+      points: verticalLine(e.from, fromSide, e.to, toSide, off),
     };
   }
   const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
   return {
     edgeId: e.id, fromSide, toSide, pattern: 'channel-approach',
-    points: [
-      { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-      { x: nodeCX(e.from), y: poolChannelY(gap, run) },
-      { x: nodeCX(e.to), y: poolChannelY(gap, run) },
-      { x: nodeCX(e.to), y: portY(e.to, toSide) },
-    ],
+    points: verticalZ(e.from, fromSide, poolChannelY(gap, run), e.to, toSide),
   };
 }
 
@@ -237,12 +229,7 @@ export function planIntoBoundary(
       const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
       return {
         edgeId: e.id, fromSide, toSide, pattern: 'channel-approach',
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-          { x: nodeCX(e.from), y: poolChannelY(gap, run) },
-          { x: nodeCX(e.to), y: poolChannelY(gap, run) },
-          { x: nodeCX(e.to), y: portY(e.to, toSide) },
-        ],
+        points: verticalZ(e.from, fromSide, poolChannelY(gap, run), e.to, toSide),
       };
     }
     // 同一プール: 送信元が上の行にあるときだけ、対象行の上チャネルから上辺の円へ降りる
@@ -254,12 +241,7 @@ export function planIntoBoundary(
     const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, 'above', gU, u.col);
     return {
       edgeId: e.id, fromSide, toSide, pattern: 'channel-approach',
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh) },
-        { x: nodeCX(e.to), y: portY(e.to, toSide) },
-      ],
+      points: verticalZ(e.from, fromSide, channelY(v.lane, v.row, tCh), e.to, toSide),
     };
   };
   const z = straightIn();

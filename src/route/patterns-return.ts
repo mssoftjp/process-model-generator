@@ -6,7 +6,7 @@ import type {
 } from '../types.ts';
 import { rowKey, cellOf, reserveColRun, noteRowRun, gutterScale, noteStubRun, fallbackOffset, allocGutter, allocChannel } from './context.ts';
 import type { Ctx } from './context.ts';
-import { portX, portY, gutterX, nodeCX, channelY } from './symbols.ts';
+import { portX, portY, gutterX, nodeCX, channelY, verticalZ } from './symbols.ts';
 import { isGw, needsBottomMessagePort, bottomFree, topFree, noDownwardOut, fallbackRightY } from './predicates.ts';
 
 export function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
@@ -36,12 +36,7 @@ export function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
         );
         return {
           edgeId: e.id, fromSide: sourceSide, toSide: targetSide, pattern: 'return',
-          points: [
-            { x: nodeCX(e.from), y: portY(e.from, sourceSide) },
-            { x: nodeCX(e.from), y: channelY(u.lane, outerRow, t) },
-            { x: nodeCX(e.to), y: channelY(u.lane, outerRow, t) },
-            { x: nodeCX(e.to), y: portY(e.to, targetSide) },
-          ],
+          points: verticalZ(e.from, sourceSide, channelY(u.lane, outerRow, t), e.to, targetSide),
         };
       }
       const rUp = allocGutter(ctx, gup, 'exit', gU, outer);
@@ -73,12 +68,7 @@ export function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
     const t = allocChannel(ctx, v.lane, v.row, v.col, u.col, 'below', gU, u.col);
     return {
       edgeId: e.id, fromSide: 'top', toSide: 'top', pattern: 'return',
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, 'top') },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, t) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, t) },
-        { x: nodeCX(e.to), y: portY(e.to, 'top') },
-      ],
+      points: verticalZ(e.from, 'top', channelY(v.lane, v.row, t), e.to, 'top'),
     };
   }
   // 行違い戻り(改善候補のみ): top が空いていて自列中心を対象上チャネルまで昇れるなら、
@@ -96,12 +86,7 @@ export function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
     const t = allocChannel(ctx, v.lane, v.row, v.col, u.col, 'below', gU, u.col);
     return {
       edgeId: e.id, fromSide: 'top', toSide: 'top', pattern: 'return',
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, 'top') },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, t) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, t) },
-        { x: nodeCX(e.to), y: portY(e.to, 'top') },
-      ],
+      points: verticalZ(e.from, 'top', channelY(v.lane, v.row, t), e.to, 'top'),
     };
   }
   const gup = u.col + 1; // 自列すぐ右の溝を昇る
