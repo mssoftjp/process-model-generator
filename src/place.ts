@@ -30,6 +30,7 @@ export function place(g: NormGraph): Placement {
   pullReadableDocColumns(g, col, docIds);
   keepDocsOffForeignSpine(g, col, docIds);
   snapStoresToLaneWriter(g, col);
+  alignMessageStarts(g, col);
   const { row, laneRows, reserved } = assignRows(g, col, docIds);
   const maxCol = Math.max(0, ...[...col.values()]);
   return { col, row, laneRows, maxCol, reserved };
@@ -135,6 +136,84 @@ function snapStoresToLaneWriter(g: NormGraph, col: Map<string, number>): void {
     const home = Math.max(...sameLane.map((w) => col.get(w.id) ?? 0));
     const here = col.get(n.id) ?? 0;
     if (home < here) col.set(n.id, home);
+  }
+}
+
+/**
+ * メッセージ開始の整列。各プールの時間軸は独立で、メッセージは列を進めない(S-15)。
+ * ただし「注文が届いた時点で仕入先の工程が始まる」というトリガのタイミングは、
+ * 開始イベントを送信元の列に揃えると読み取れる。BPMN も協調図の慣習として、
+ * メッセージ開始イベントを送信活動の下に置く。
+ *
+ * 規則: プール P の開始イベント(合成開始の直後ノードを含む)へ他プールのノードから
+ * メッセージが入るとき、開始の列がその送信元の列より手前なら、P の全ノードを差分だけ
+ * 右へ平行移動する。平行移動なので P 内部の配置は変わらない。
+ * 送信元プールを先に確定するため、プール間のトリガ関係を位相順に処理し、
+ * 循環するプール(互いに開始を送り合う)は動かさない。
+ */
+function alignMessageStarts(g: NormGraph, col: Map<string, number>): void {
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const poolOf = (id: string) => {
+    const n = nodeById.get(id);
+    return n ? poolOfLane.get(n.lane) : undefined;
+  };
+  // 開始トリガ: 開始イベント、またはその直後のノード(受信タスク・受信イベント)へ入るメッセージ。
+  // 「注文待ち → 注文書を受信」のように、無印の開始の次で最初の通信を受ける形が多い。
+  // 直後ノードは受信要素(task(receive) / mid(message))に限る。返信を受ける普通のタスクまで
+  // 含めると往復がトリガの循環になり、整列が働かなくなる。
+  const startLike = new Set<string>();
+  const receiving = (id: string) => {
+    const n = nodeById.get(id);
+    return !!n && (
+      (n.kind === 'task' && n.subtype === 'receive') ||
+      (n.kind === 'mid' && n.subtype === 'message' && n.eventThrow !== true)
+    );
+  };
+  for (const n of g.nodes) {
+    if (n.kind !== 'start') continue;
+    startLike.add(n.id);
+    for (const e of g.edges) if (e.kind === 'seq' && e.from === n.id && receiving(e.to)) startLike.add(e.to);
+  }
+  const triggers: Array<{ from: string; to: string; fromPool: string; toPool: string }> = [];
+  for (const e of g.edges) {
+    if (e.kind !== 'msg' || e.fromPool || e.toPool || !startLike.has(e.to)) continue;
+    const fp = poolOf(e.from);
+    const tp = poolOf(e.to);
+    if (fp === undefined || tp === undefined || fp === tp) continue;
+    triggers.push({ from: e.from, to: e.to, fromPool: fp, toPool: tp });
+  }
+  if (triggers.length === 0) return;
+  // プール間トリガ関係の位相順(Kahn)。残ったプールは循環に属するので動かさない
+  const pools = [...new Set(triggers.flatMap((t) => [t.fromPool, t.toPool]))];
+  const indeg = new Map(pools.map((p) => [p, 0]));
+  for (const t of triggers) indeg.set(t.toPool, (indeg.get(t.toPool) ?? 0) + 1);
+  const order: string[] = [];
+  const queue = pools.filter((p) => indeg.get(p) === 0).sort();
+  while (queue.length > 0) {
+    const p = queue.shift()!;
+    order.push(p);
+    for (const t of triggers.filter((t) => t.fromPool === p)) {
+      const d = (indeg.get(t.toPool) ?? 0) - 1;
+      indeg.set(t.toPool, d);
+      if (d === 0) queue.push(t.toPool);
+    }
+    queue.sort();
+  }
+  for (const pool of order) {
+    let shift = 0;
+    for (const t of triggers) {
+      if (t.toPool !== pool || !order.includes(t.fromPool)) continue;
+      shift = Math.max(shift, (col.get(t.from) ?? 0) - (col.get(t.to) ?? 0));
+    }
+    if (shift <= 0) continue;
+    // プールの全ノードを一律に動かす。文書だけ残すとチェーン連結が前提にする列の単調性が
+    // 壊れ、同じセルに 2 ノードが乗る(fuzz seed 1798)。プール越えの関連が逆向きになる
+    // ことはあるが、プール間の時間軸は独立なので順序の不変条件は元々成り立たない。
+    for (const n of g.nodes) {
+      if (poolOfLane.get(n.lane) !== pool) continue;
+      col.set(n.id, (col.get(n.id) ?? 0) + shift);
+    }
   }
 }
 

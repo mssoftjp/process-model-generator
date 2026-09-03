@@ -1864,6 +1864,7 @@ function place(g) {
   pullReadableDocColumns(g, col, docIds);
   keepDocsOffForeignSpine(g, col, docIds);
   snapStoresToLaneWriter(g, col);
+  alignMessageStarts(g, col);
   const { row, laneRows, reserved } = assignRows(g, col, docIds);
   const maxCol = Math.max(0, ...[...col.values()]);
   return { col, row, laneRows, maxCol, reserved };
@@ -1931,6 +1932,60 @@ function snapStoresToLaneWriter(g, col) {
     const home = Math.max(...sameLane.map((w) => col.get(w.id) ?? 0));
     const here = col.get(n.id) ?? 0;
     if (home < here) col.set(n.id, home);
+  }
+}
+function alignMessageStarts(g, col) {
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const poolOf = (id) => {
+    const n = nodeById.get(id);
+    return n ? poolOfLane.get(n.lane) : void 0;
+  };
+  const startLike = /* @__PURE__ */ new Set();
+  const receiving = (id) => {
+    const n = nodeById.get(id);
+    return !!n && (n.kind === "task" && n.subtype === "receive" || n.kind === "mid" && n.subtype === "message" && n.eventThrow !== true);
+  };
+  for (const n of g.nodes) {
+    if (n.kind !== "start") continue;
+    startLike.add(n.id);
+    for (const e of g.edges) if (e.kind === "seq" && e.from === n.id && receiving(e.to)) startLike.add(e.to);
+  }
+  const triggers = [];
+  for (const e of g.edges) {
+    if (e.kind !== "msg" || e.fromPool || e.toPool || !startLike.has(e.to)) continue;
+    const fp = poolOf(e.from);
+    const tp = poolOf(e.to);
+    if (fp === void 0 || tp === void 0 || fp === tp) continue;
+    triggers.push({ from: e.from, to: e.to, fromPool: fp, toPool: tp });
+  }
+  if (triggers.length === 0) return;
+  const pools = [...new Set(triggers.flatMap((t) => [t.fromPool, t.toPool]))];
+  const indeg = new Map(pools.map((p) => [p, 0]));
+  for (const t of triggers) indeg.set(t.toPool, (indeg.get(t.toPool) ?? 0) + 1);
+  const order = [];
+  const queue = pools.filter((p) => indeg.get(p) === 0).sort();
+  while (queue.length > 0) {
+    const p = queue.shift();
+    order.push(p);
+    for (const t of triggers.filter((t2) => t2.fromPool === p)) {
+      const d = (indeg.get(t.toPool) ?? 0) - 1;
+      indeg.set(t.toPool, d);
+      if (d === 0) queue.push(t.toPool);
+    }
+    queue.sort();
+  }
+  for (const pool of order) {
+    let shift = 0;
+    for (const t of triggers) {
+      if (t.toPool !== pool || !order.includes(t.fromPool)) continue;
+      shift = Math.max(shift, (col.get(t.from) ?? 0) - (col.get(t.to) ?? 0));
+    }
+    if (shift <= 0) continue;
+    for (const n of g.nodes) {
+      if (poolOfLane.get(n.lane) !== pool) continue;
+      col.set(n.id, (col.get(n.id) ?? 0) + shift);
+    }
   }
 }
 function layerColumns(g, docIds) {
@@ -2301,13 +2356,25 @@ function assignPoolGapTracks(ctx) {
       }
       return n;
     };
-    for (const r of runs.slice().sort((a, b) => score2(a) - score2(b) || a.runId - b.runId)) {
-      const before = (p) => p.upperX >= r.a && p.upperX <= r.b || r.lowerX >= p.a && r.lowerX <= p.b;
-      let t = Math.max(0, ...placed.filter((p) => before(p.run)).map((p) => p.t + 1));
+    const before = (p, r) => p.runId !== r.runId && (p.upperX >= r.a && p.upperX <= r.b || r.lowerX >= p.a && r.lowerX <= p.b);
+    const preds = /* @__PURE__ */ new Map();
+    for (const r of runs) {
+      preds.set(r.runId, runs.filter((p) => before(p, r) && !before(r, p)));
+    }
+    const remaining = runs.slice().sort((a, b) => score2(a) - score2(b) || a.runId - b.runId);
+    const done = /* @__PURE__ */ new Set();
+    const place2 = (r) => {
+      let t = Math.max(0, ...(preds.get(r.runId) ?? []).filter((p) => done.has(p.runId)).map((p) => poolGapRunTrack.get(p.runId) + 1));
       while (placed.some((p) => p.t === t && p.run.a <= r.b && r.a <= p.run.b)) t++;
       placed.push({ run: r, t });
       poolGapRunTrack.set(r.runId, t);
+      done.add(r.runId);
       poolGapTracks.set(gap, Math.max(poolGapTracks.get(gap) ?? 0, t + 1));
+    };
+    while (remaining.length > 0) {
+      const i = remaining.findIndex((r2) => (preds.get(r2.runId) ?? []).every((p) => done.has(p.runId)));
+      const r = remaining.splice(i >= 0 ? i : 0, 1)[0];
+      place2(r);
     }
   }
   return { poolGapTracks, poolGapRunTrack };
@@ -2597,7 +2664,7 @@ function planForward(ctx, e) {
     const otherAssoc = ctx.g.edges.some(
       (o) => o.kind === "assoc" && o.id !== e.id && o.to === e.from
     );
-    if (gV > gU && (u.col === v.col || otherAssoc) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
+    if (gV > gU && v.col > u.col && otherAssoc && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && rowFree && reserveColRun(ctx, u.col, gU, gV, e)) {
       noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
       return {
         edgeId: e.id,
@@ -2632,7 +2699,7 @@ function planForward(ctx, e) {
     );
     const adjacentPeer2 = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
     const adjacentFour = v.col === u.col + 1 && adjacentPeer2 !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer2 && other.to === e.to);
-    if (v.node.kind === "doc" && gV > gU && u.lane === v.lane && u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour) {
+    if (v.node.kind === "doc" && gV > gU && u.lane === v.lane && u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour && railClear(ctx, v.col, gU, gV)) {
       const rail = nodeCX(e.to, 48);
       return {
         edgeId: e.id,
@@ -2735,7 +2802,7 @@ function planForward(ctx, e) {
       points
     };
   }
-  if (sameRow && rowFree && e.kind === "assoc") {
+  if (sameRow && rowFree && e.kind === "assoc" && u.col < v.col) {
     noteLabelNeed(ctx, e, u.col + 1);
     return {
       edgeId: e.id,
@@ -2861,7 +2928,7 @@ function planForward(ctx, e) {
   const g1 = u.col + 1;
   noteLabelNeed(ctx, e, g1);
   const srcY = fallbackRightY(e, e.from);
-  if (rowFreeWide && !sameRow && !(e.kind === "assoc" && u.col > v.col && v.node.kind === "store") && (e.kind !== "seq" || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)) {
+  if (rowFreeWide && !sameRow && u.col < v.col && (e.kind !== "seq" || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)) {
     if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
     noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
     const run = allocGutter(ctx, g1, "exit", gU, gV);
@@ -6396,7 +6463,11 @@ function compile(source, opts = {}) {
   if (selected !== symbolicSelected) {
     diags.push({ level: "info", code: "N-434", message: "Data Association \u306E\u76F4\u4EA4\u53EF\u8996\u30B0\u30E9\u30D5\u7D4C\u8DEF\u3092\u63A1\u7528" });
   }
+  const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
+  const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
+  const poolOfNode = (id) => poolOfLane.get(laneOfNode.get(id) ?? "");
   for (const e of normalized.edges) {
+    if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
     if (e.isReturn && placement.col.get(e.to) >= placement.col.get(e.from)) {
       diags.push({
         level: "warning",

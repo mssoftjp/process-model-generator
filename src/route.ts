@@ -315,16 +315,35 @@ function assignPoolGapTracks(ctx: Ctx) {
       }
       return n;
     };
-    for (const r of runs.slice().sort((a, b) => score(a) - score(b) || a.runId - b.runId)) {
-      // 上端が相手区間内、または相手の下端が自区間内なら、相手を必ず上へ置く。
-      const before = (p: Run) =>
+    // 上端が相手区間内、または相手の下端が自区間内なら、相手(p)は必ず r より上。
+    // この関係を DAG として位相順に置く。先に置いた走行しか見ない first-fit では、
+    // 後から来た走行を上に置くべき対で順序が破れ、列中心の縦線が帯の中で重なる
+    // (Z 形の gapOrderConsistent はこの順序が守られることを前提にしている)。
+    const before = (p: Run, r: Run) =>
+      p.runId !== r.runId && (
         (p.upperX >= r.a && p.upperX <= r.b) ||
-        (r.lowerX >= p.a && r.lowerX <= p.b);
-      let t = Math.max(0, ...placed.filter((p) => before(p.run)).map((p) => p.t + 1));
+        (r.lowerX >= p.a && r.lowerX <= p.b)
+      );
+    const preds = new Map<number, Run[]>();
+    for (const r of runs) {
+      // 相互に before なら順序を決められない(X 字対)。独立として扱う
+      preds.set(r.runId, runs.filter((p) => before(p, r) && !before(r, p)));
+    }
+    const remaining = runs.slice().sort((a, b) => score(a) - score(b) || a.runId - b.runId);
+    const done = new Set<number>();
+    const place = (r: Run) => {
+      let t = Math.max(0, ...(preds.get(r.runId) ?? []).filter((p) => done.has(p.runId)).map((p) => poolGapRunTrack.get(p.runId)! + 1));
       while (placed.some((p) => p.t === t && p.run.a <= r.b && r.a <= p.run.b)) t++;
       placed.push({ run: r, t });
       poolGapRunTrack.set(r.runId, t);
+      done.add(r.runId);
       poolGapTracks.set(gap, Math.max(poolGapTracks.get(gap) ?? 0, t + 1));
+    };
+    while (remaining.length > 0) {
+      const i = remaining.findIndex((r) => (preds.get(r.runId) ?? []).every((p) => done.has(p.runId)));
+      // 循環(長さ 3 以上)は決定的に先頭を切って置く
+      const r = remaining.splice(i >= 0 ? i : 0, 1)[0]!;
+      place(r);
     }
   }
   return { poolGapTracks, poolGapRunTrack };
@@ -757,8 +776,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
       o.kind === 'assoc' && o.id !== e.id && o.to === e.from
     );
     if (
-      gV > gU &&
-      (u.col === v.col || otherAssoc) &&
+      gV > gU && v.col > u.col && otherAssoc &&
       !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
       rowFree &&
       reserveColRun(ctx, u.col, gU, gV, e)
@@ -803,9 +821,11 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     const adjacentFour =
       v.col === u.col + 1 && adjacentPeer !== undefined &&
       ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to);
+    // レール(対象列中心 +48px)は予約を持たないので、対象列の途中セルが狭い doc だけのときに限る
     if (
       v.node.kind === 'doc' && gV > gU && u.lane === v.lane &&
-      u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour
+      u.col < v.col && v.col - u.col <= 2 && coWriterHere && !adjacentFour &&
+      railClear(ctx, v.col, gU, gV)
     ) {
       // 対象より少し後の時間を通る。縦図では書類の上ではなく下を横切り、XOR 列までは落とさない。
       const rail = nodeCX(e.to, 48);
@@ -923,7 +943,8 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
       points,
     };
   }
-  if (sameRow && rowFree && e.kind === 'assoc') {
+  // 時間を戻る関連(対象が左)は基線に乗せない: 右出→左入の直線が自身や途中ノードを貫く
+  if (sameRow && rowFree && e.kind === 'assoc' && u.col < v.col) {
     // 同一行のデータ関連は基線から10px上へ分離する。工程のシーケンス出入口と
     // 同一点・同一スタブを共有させない。doc の左辺は関連専用。
     noteLabelNeed(ctx, e, u.col + 1);
@@ -1076,8 +1097,9 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
 
   // row-approach: 溝を垂直移動して対象行の基線に乗る。
   // 時間を戻るストア関連は基線に乗せない。他所出のシーケンス列を貫いて途中出現に見える。
+  // 時間を戻る辺(対象が左)は基線に乗せない。溝から左へ向かう接近が対象や途中ノードを貫く。
   if (
-    rowFreeWide && !sameRow && !(e.kind === 'assoc' && u.col > v.col && v.node.kind === 'store') &&
+    rowFreeWide && !sameRow && u.col < v.col &&
     (e.kind !== 'seq' || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) &&
     canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)
   ) {

@@ -627,6 +627,8 @@ describe('orientation (縦横は同じ意味の別修辞)', () => {
     const p1 = r.geometry.pools.find((p) => p.id === 'p1')!;
     expect(p1.x - (p0.x + p0.w)).toBeGreaterThanOrEqual(48);
     for (const e of r.geometry.edges.filter((e) => e.kind === 'msg')) {
+      // 同列の一直線(2 点)は幹線を持たない(S-57 / O-10)
+      if (e.points.length === 2) continue;
       expect(e.points.some((a, i) => {
         const b = e.points[i + 1];
         return !!b && a.x === b.x && a.y !== b.y && a.x > p0.x + p0.w && a.x < p1.x;
@@ -713,14 +715,36 @@ describe('orientation (縦横は同じ意味の別修辞)', () => {
 });
 
 describe('プールごとの時間軸', () => {
-  it('メッセージフローは受信側プロセスの列を押し広げない', () => {
-    const src = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n s1 -> A\npool p2[処理者]\nlane L2\n start s2\n B[処理]\n s2 -> B\n A ~> s2`;
+  it('途中のメッセージフローは受信側プロセスの列を押し広げない', () => {
+    const src = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n A2[追加]\n s1 -> A\n A -> A2\npool p2[処理者]\nlane L2\n start s2\n B[処理]\n C[続き]\n s2 -> B\n B -> C\n A2 ~> C`;
     const { ir } = parse(src);
     const n = normalize(ir, false);
     const p = place(n);
     expect(p.col.get('s1')).toBe(0);
     expect(p.col.get('s2')).toBe(0);
-    expect(p.col.get('B')).toBe(1);
+    expect(p.col.get('C')).toBe(2);
+  });
+
+  it('開始イベントへのメッセージは受信側プールを送信元の列まで平行移動する', () => {
+    // 「注文が届いた時点で仕入先の工程が始まる」を開始イベントの位置で読めるようにする。
+    const src = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n s1 -> A\npool p2[処理者]\nlane L2\n start s2\n B[処理]\n s2 -> B\n A ~> s2`;
+    const n = normalize(parse(src).ir, false);
+    const p = place(n);
+    expect(p.col.get('s1')).toBe(0);
+    expect(p.col.get('A')).toBe(1);
+    expect(p.col.get('s2')).toBe(1); // 送信元 A の列
+    expect(p.col.get('B')).toBe(2); // プール内部の相対配置は不変
+    const r = noOracleViolations(src);
+    const msg = r.geometry.edges.find((e) => e.kind === 'msg')!;
+    expect(msg.points).toHaveLength(2); // 同列なので一直線
+  });
+
+  it('互いに開始を送り合うプールは動かさない', () => {
+    const src = `pool p1[甲]\nlane L1\n start s1\n A[a]\n s1 -> A\npool p2[乙]\nlane L2\n start s2\n B[b]\n s2 -> B\n A ~> s2\n B ~> s1`;
+    const n = normalize(parse(src).ir, false);
+    const p = place(n);
+    expect(p.col.get('s1')).toBe(0);
+    expect(p.col.get('s2')).toBe(0);
   });
 });
 

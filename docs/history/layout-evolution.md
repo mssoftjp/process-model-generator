@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L23
+# Layout Evolution, L1–L24
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -188,6 +188,14 @@ The last placement-bound class in L22 was a store or document referenced from fa
 Two thresholds were corrected by the corpus: a one-lane distance repeated documents in keihi and ringi-docs whose readers were only two or three columns away, adding bends and a crossing, and a three-column gap split a document that an existing placement test expects to stay whole. Fuzzing also exposed a latent hazard in the same-column far-document rail (a 28 px offset run with no reservation), which now requires narrow intermediate cells, a task writer, and a quiet south face; and read-only document chains no longer take row 0 of a spine-less lane, where a same-row read can only enter through a hook.
 
 Outcome: invoice-payment-review hops 17 → 10 with all other corpus diagrams unchanged, fuzz violation set identical to v0.2.19.
+
+## L24 — Align message-triggered starts with their sender (2026-09-03)
+
+Since L12 every pool started at column 0, so a supplier's process began at the left edge while the order that triggers it was sent from the middle of the customer's lane, and the message ran backwards in time. BPMN assigns no meaning to position, but collaboration diagrams conventionally place a message start event under the sending activity, and the reproduction originals do so. The engine now treats a message into a start event, or into the node right after a start, as a lower bound on the receiving pool's columns and shifts that pool right as a unit (S-15); mutually triggering pools are left alone. Other messages still do not move columns, which keeps the L12 result that round trips do not serialize into one wide sequence.
+
+The shift exposed a latent routing hazard: a data association whose target lies to the left of its source could take the baseline patterns and cut through nodes between them. Direct and row-approach patterns now require a forward target.
+
+Outcome: restaurant and credit-scoring start their second pools under the triggering activity, at the cost of wider bands; other diagrams are unchanged. Fuzz violation set identical to v0.2.19.
 
 ## Open items retained from the loops
 

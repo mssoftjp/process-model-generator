@@ -133,8 +133,13 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     diags.push({ level: 'info', code: 'N-434', message: 'Data Association の直交可視グラフ経路を採用' });
   }
 
-  // 不変条件の安全網: DFS 後退辺の対象は祖先なので、列は必ず手前になるはず
+  // 不変条件の安全網: DFS 後退辺の対象は祖先なので、列は必ず手前になるはず。
+  // プールをまたぐ辺は対象外(時間軸が独立で、S-15 の開始整列でプールごとに列が動く)。
+  const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
+  const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
+  const poolOfNode = (id: string) => poolOfLane.get(laneOfNode.get(id) ?? '');
   for (const e of normalized.edges) {
+    if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
     if (e.isReturn && placement.col.get(e.to)! >= placement.col.get(e.from)!) {
       diags.push({
         level: 'warning', code: 'W-252',
