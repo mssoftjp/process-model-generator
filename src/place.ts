@@ -7,7 +7,7 @@
 //   「層とレーンのどちらを先に固定するか」（C-33）はここで問いごと消える。
 
 import { isAttachedBoundary } from './bpmn.ts';
-import { buildPoolIndex } from './pools.ts';
+import { buildPoolIndex, type PoolIndex } from './pools.ts';
 import { isDocLike } from './types.ts';
 import type { NormEdge, NormGraph, NormNode, Placement } from './types.ts';
 
@@ -24,25 +24,50 @@ export function isLayeringEdge(e: NormEdge, docIds: Set<string>): boolean {
   return !e.isReturn && (e.kind === 'seq' || (e.kind === 'assoc' && docIds.has(e.to)));
 }
 
+/** 列決定の各パスが共有する文脈。col は最長路レイヤリングの結果で、パスが順に書き換える。 */
+export interface PlaceCtx {
+  g: NormGraph;
+  col: Map<string, number>;
+  docIds: Set<string>; // 文書類(状態ノード)。列を拘束するグラフの判定に使う
+  nodeById: Map<string, NormNode>;
+  pools: PoolIndex;
+}
+
+type ColumnPass = (ctx: PlaceCtx) => void;
+
+/**
+ * 列を書き換えるパスの順序。前のパスの結果を後のパスが前提にする:
+ *   1. 境界イベントを対象へ張り付ける(以後の制約はこの張り付きを保つ)
+ *   2. メッセージの時系列整列(S-15)と、積み重なった回廊の分離
+ *   3. 文書の列移動(読み手の直前へ / 他所の本流から書き手へ / ストアを宣言レーンの書き手へ)
+ *   4. 文書の列移動が終わってから通信回廊を空ける(先に空けても後段の移動で戻される)
+ *   5. 開始イベントを直後のノードの直前へ寄せる(他の全てが決まってから)
+ */
+const COLUMN_PASSES: readonly ColumnPass[] = [
+  pinBoundaryColumns,
+  alignMessageTiming,
+  pullReadableDocColumns,
+  keepDocsOffForeignSpine,
+  snapStoresToLaneWriter,
+  keepDocsOffMessageCorridors,
+  pullStartsToSuccessor,
+];
+
 export function place(g: NormGraph): Placement {
   const docIds = new Set(g.nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
-  const col = layerColumns(g, docIds);
-  pinBoundaryColumns(g, col, docIds);
-  alignMessageTiming(g, col, docIds);
-  pullReadableDocColumns(g, col, docIds);
-  keepDocsOffForeignSpine(g, col, docIds);
-  snapStoresToLaneWriter(g, col);
-  // 文書の列移動が終わってから回廊を空ける(先に空けても後段の移動で戻される)
-  keepDocsOffMessageCorridors(g, col, docIds);
-  pullStartsToSuccessor(g, col);
-  const { row, laneRows, reserved } = assignRows(g, col, docIds);
-  const maxCol = Math.max(0, ...[...col.values()]);
-  return { col, row, laneRows, maxCol, reserved };
+  const ctx: PlaceCtx = {
+    g, col: layerColumns(g, docIds), docIds,
+    nodeById: new Map(g.nodes.map((n) => [n.id, n])),
+    pools: buildPoolIndex(g),
+  };
+  for (const pass of COLUMN_PASSES) pass(ctx);
+  const { row, laneRows, reserved } = assignRows(ctx);
+  const maxCol = Math.max(0, ...[...ctx.col.values()]);
+  return { col: ctx.col, row, laneRows, maxCol, reserved };
 }
 
 /** 境界イベントは対象 Activity と同じ列に張り付く。出辺の下流はそこから再レイヤする。 */
-function pinBoundaryColumns(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function pinBoundaryColumns({ g, col, docIds, nodeById }: PlaceCtx): void {
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds));
   for (let iter = 0; iter < g.nodes.length + 2; iter++) {
     let changed = false;
@@ -73,7 +98,7 @@ function pinBoundaryColumns(g: NormGraph, col: Map<string, number>, docIds: Set<
  * 直前へ寄せる。複数関係・循環・工程辺へ参加する文書は動かさない。
  * レーン・他ノードの列は触らない。
  */
-function pullReadableDocColumns(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
+function pullReadableDocColumns({ g, col, docIds }: PlaceCtx): void {
   for (const n of g.nodes) {
     if (!docIds.has(n.id)) continue;
     if (g.edges.some((e) => e.kind !== 'assoc' && (e.from === n.id || e.to === n.id))) continue;
@@ -97,7 +122,7 @@ function pullReadableDocColumns(g: NormGraph, col: Map<string, number>, docIds: 
  * 文書が次工程のゲートウェイやタスクと同じ列に乗ると、関連線が本流を横切る。
  * 書き手自身の列へ戻し、本流ノードの横の余剰行へ置く。
  */
-function keepDocsOffForeignSpine(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
+function keepDocsOffForeignSpine({ g, col, docIds }: PlaceCtx): void {
   const writersOf = (id: string) =>
     new Set(g.edges.filter((e) => e.kind === 'assoc' && e.to === id).map((e) => e.from));
   const foreignSpine = (lane: string, c: number, ignore: Set<string>) =>
@@ -130,8 +155,7 @@ function keepDocsOffForeignSpine(g: NormGraph, col: Map<string, number>, docIds:
  * 図の端で破線が横一列に積み上がる。シーケンスに乗るストアと、文書からの書き戻しは
  * 列を動かさない（W-252）。前へは進めず、後ろへだけ戻す。
  */
-function snapStoresToLaneWriter(g: NormGraph, col: Map<string, number>): void {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function snapStoresToLaneWriter({ g, col, nodeById }: PlaceCtx): void {
   for (const n of g.nodes) {
     if (n.kind !== 'store') continue;
     // 工程への関連出があるストアは連鎖の途中。列を戻すと順方向の関連がノードを貫く。
@@ -164,8 +188,8 @@ function snapStoresToLaneWriter(g: NormGraph, col: Map<string, number>): void {
  * 閉路)は収束しないので、回数上限で検出し、その一本だけを制約から外して直前の列へ戻す。
  * 先に宣言した通信が優先される(決定的)。
  */
-function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function alignMessageTiming(ctx: PlaceCtx): void {
+  const { g, col, docIds, nodeById } = ctx;
   const messages = g.edges
     .filter((e) => e.kind === 'msg' && !e.fromPool && !e.toPool && nodeById.has(e.from) && nodeById.has(e.to))
     .sort((a, b) => a.declIndex - b.declIndex);
@@ -214,7 +238,7 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
       for (const [id, c] of snapshot) col.set(id, c);
     }
   }
-  separateStackedCorridors(g, col, active, floors, relax, anchor);
+  separateStackedCorridors(ctx, active, floors, relax, anchor);
 }
 
 /**
@@ -225,11 +249,9 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
  * 手描きで「2 本目の通信は隣の列に一本ずらす」のと同じ。上限回数で打ち切る(決定的)。
  */
 function separateStackedCorridors(
-  g: NormGraph, col: Map<string, number>, active: NormEdge[], floors: Map<string, number>,
+  { col, nodeById, pools }: PlaceCtx, active: NormEdge[], floors: Map<string, number>,
   relax: (active: NormEdge[]) => boolean, anchor: (id: string) => string,
 ): void {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const pools = buildPoolIndex(g);
   const poolIdx = (id: string) => pools.indexOfNode(id);
   const spine = (id: string) => nodeById.get(id)?.onSpine === true;
   const sameNodes = (a: NormEdge, b: NormEdge) =>
@@ -277,10 +299,8 @@ function separateStackedCorridors(
  * 持たない文書・注釈が回廊を塞ぐと、通信が側面経路へ落ちて交差する。そのような文書類は
  * 右隣の列へ逃がす(読み手が無いので列を進めても関連が逆走しない)。
  */
-function keepDocsOffMessageCorridors(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function keepDocsOffMessageCorridors({ g, col, docIds, nodeById, pools }: PlaceCtx): void {
   const laneIndex = new Map(g.lanes.map((l, i) => [l.id, i]));
-  const pools = buildPoolIndex(g);
   const corridors = new Set<string>(); // `${lane}:${col}`
   for (const e of g.edges) {
     if (e.kind !== 'msg' || e.fromPool || e.toPool) continue;
@@ -316,7 +336,7 @@ function keepDocsOffMessageCorridors(g: NormGraph, col: Map<string, number>, doc
  * 開始だけが左端に残って長い辺になる(「注文待ち → 注文書を受信」)。開始は前任者を
  * 持たないので右へ寄せても制約を破らない。合成開始も同じ。
  */
-function pullStartsToSuccessor(g: NormGraph, col: Map<string, number>): void {
+function pullStartsToSuccessor({ g, col }: PlaceCtx): void {
   for (const n of g.nodes) {
     if (n.kind !== 'start') continue;
     const succ = g.edges.filter((e) => e.kind === 'seq' && e.from === n.id).map((e) => col.get(e.to) ?? 0);
@@ -365,13 +385,12 @@ interface Chain {
   firstDecl: number;
 }
 
-function assignRows(g: NormGraph, col: Map<string, number>, docIds: Set<string>) {
+function assignRows({ g, col, docIds, nodeById }: PlaceCtx) {
   const row = new Map<string, number>();
   const laneRows = new Map<string, number>();
   const reserved = new Map<string, Array<{ row: number; c0: number; c1: number }>>();
   for (const lane of g.lanes) reserved.set(lane.id, []);
 
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   // チェーンの連結は列を拘束するグラフだけで判定する(列の単調性が要る)
   const outsOf = (id: string) => g.edges.filter((e) => e.from === id && isLayeringEdge(e, docIds));
   const insOf = (id: string) => g.edges.filter((e) => e.to === id && isLayeringEdge(e, docIds));

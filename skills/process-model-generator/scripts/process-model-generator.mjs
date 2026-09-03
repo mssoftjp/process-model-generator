@@ -1951,22 +1951,30 @@ function isLayeringEdge(e, docIds) {
   if (e.fromPool || e.toPool) return false;
   return !e.isReturn && (e.kind === "seq" || e.kind === "assoc" && docIds.has(e.to));
 }
+var COLUMN_PASSES = [
+  pinBoundaryColumns,
+  alignMessageTiming,
+  pullReadableDocColumns,
+  keepDocsOffForeignSpine,
+  snapStoresToLaneWriter,
+  keepDocsOffMessageCorridors,
+  pullStartsToSuccessor
+];
 function place(g) {
   const docIds = new Set(g.nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
-  const col = layerColumns(g, docIds);
-  pinBoundaryColumns(g, col, docIds);
-  alignMessageTiming(g, col, docIds);
-  pullReadableDocColumns(g, col, docIds);
-  keepDocsOffForeignSpine(g, col, docIds);
-  snapStoresToLaneWriter(g, col);
-  keepDocsOffMessageCorridors(g, col, docIds);
-  pullStartsToSuccessor(g, col);
-  const { row, laneRows, reserved } = assignRows(g, col, docIds);
-  const maxCol = Math.max(0, ...[...col.values()]);
-  return { col, row, laneRows, maxCol, reserved };
+  const ctx = {
+    g,
+    col: layerColumns(g, docIds),
+    docIds,
+    nodeById: new Map(g.nodes.map((n) => [n.id, n])),
+    pools: buildPoolIndex(g)
+  };
+  for (const pass of COLUMN_PASSES) pass(ctx);
+  const { row, laneRows, reserved } = assignRows(ctx);
+  const maxCol = Math.max(0, ...[...ctx.col.values()]);
+  return { col: ctx.col, row, laneRows, maxCol, reserved };
 }
-function pinBoundaryColumns(g, col, docIds) {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function pinBoundaryColumns({ g, col, docIds, nodeById }) {
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds));
   for (let iter = 0; iter < g.nodes.length + 2; iter++) {
     let changed = false;
@@ -1991,7 +1999,7 @@ function pinBoundaryColumns(g, col, docIds) {
     if (!changed) break;
   }
 }
-function pullReadableDocColumns(g, col, docIds) {
+function pullReadableDocColumns({ g, col, docIds }) {
   for (const n of g.nodes) {
     if (!docIds.has(n.id)) continue;
     if (g.edges.some((e) => e.kind !== "assoc" && (e.from === n.id || e.to === n.id))) continue;
@@ -2002,7 +2010,7 @@ function pullReadableDocColumns(g, col, docIds) {
     if (target !== void 0 && target > (col.get(n.id) ?? 0)) col.set(n.id, target);
   }
 }
-function keepDocsOffForeignSpine(g, col, docIds) {
+function keepDocsOffForeignSpine({ g, col, docIds }) {
   const writersOf = (id) => new Set(g.edges.filter((e) => e.kind === "assoc" && e.to === id).map((e) => e.from));
   const foreignSpine = (lane, c, ignore) => g.nodes.some((n) => n.onSpine && n.lane === lane && col.get(n.id) === c && !ignore.has(n.id) && !isDocLike(n.kind) && n.kind !== "start" && n.kind !== "end");
   const nodeCol = (id) => col.get(id) ?? -1;
@@ -2019,8 +2027,7 @@ function keepDocsOffForeignSpine(g, col, docIds) {
     if (home !== here) col.set(n.id, home);
   }
 }
-function snapStoresToLaneWriter(g, col) {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function snapStoresToLaneWriter({ g, col, nodeById }) {
   for (const n of g.nodes) {
     if (n.kind !== "store") continue;
     if (g.edges.some(
@@ -2033,8 +2040,8 @@ function snapStoresToLaneWriter(g, col) {
     if (home < here) col.set(n.id, home);
   }
 }
-function alignMessageTiming(g, col, docIds) {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function alignMessageTiming(ctx) {
+  const { g, col, docIds, nodeById } = ctx;
   const messages = g.edges.filter((e) => e.kind === "msg" && !e.fromPool && !e.toPool && nodeById.has(e.from) && nodeById.has(e.to)).sort((a, b) => a.declIndex - b.declIndex);
   if (messages.length === 0) return;
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)));
@@ -2089,11 +2096,9 @@ function alignMessageTiming(g, col, docIds) {
       for (const [id, c] of snapshot) col.set(id, c);
     }
   }
-  separateStackedCorridors(g, col, active, floors, relax, anchor);
+  separateStackedCorridors(ctx, active, floors, relax, anchor);
 }
-function separateStackedCorridors(g, col, active, floors, relax, anchor) {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const pools = buildPoolIndex(g);
+function separateStackedCorridors({ col, nodeById, pools }, active, floors, relax, anchor) {
   const poolIdx = (id) => pools.indexOfNode(id);
   const spine = (id) => nodeById.get(id)?.onSpine === true;
   const sameNodes = (a, b) => a.from === b.from && a.to === b.to || a.from === b.to && a.to === b.from;
@@ -2129,10 +2134,8 @@ function separateStackedCorridors(g, col, active, floors, relax, anchor) {
     if (!bumped) return;
   }
 }
-function keepDocsOffMessageCorridors(g, col, docIds) {
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+function keepDocsOffMessageCorridors({ g, col, docIds, nodeById, pools }) {
   const laneIndex = new Map(g.lanes.map((l, i) => [l.id, i]));
-  const pools = buildPoolIndex(g);
   const corridors = /* @__PURE__ */ new Set();
   for (const e of g.edges) {
     if (e.kind !== "msg" || e.fromPool || e.toPool) continue;
@@ -2162,7 +2165,7 @@ function keepDocsOffMessageCorridors(g, col, docIds) {
     if (c !== col.get(n.id)) col.set(n.id, c);
   }
 }
-function pullStartsToSuccessor(g, col) {
+function pullStartsToSuccessor({ g, col }) {
   for (const n of g.nodes) {
     if (n.kind !== "start") continue;
     const succ = g.edges.filter((e) => e.kind === "seq" && e.from === n.id).map((e) => col.get(e.to) ?? 0);
@@ -2196,12 +2199,11 @@ function layerColumns(g, docIds) {
   for (const n of g.nodes) if (!col.has(n.id)) col.set(n.id, 0);
   return col;
 }
-function assignRows(g, col, docIds) {
+function assignRows({ g, col, docIds, nodeById }) {
   const row = /* @__PURE__ */ new Map();
   const laneRows = /* @__PURE__ */ new Map();
   const reserved = /* @__PURE__ */ new Map();
   for (const lane of g.lanes) reserved.set(lane.id, []);
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const outsOf = (id) => g.edges.filter((e) => e.from === id && isLayeringEdge(e, docIds));
   const insOf = (id) => g.edges.filter((e) => e.to === id && isLayeringEdge(e, docIds));
   const spineNodes = g.nodes.filter((n) => n.onSpine).sort((a, b) => col.get(a.id) - col.get(b.id));
@@ -6989,43 +6991,37 @@ function compile(source, opts = {}) {
     const labelReport = placeEdgeLabels(geometry2);
     return { plan: planL, geometry: geometry2, coords, titleShift, labelReport };
   };
-  const finish = (assembled) => {
-    const geometry2 = assembled.geometry;
-    return { assembled, geometry: geometry2, violations: checkOracle(normalized, geometry2), labelReport: assembled.labelReport };
+  const candidateOf = (name, assembled) => ({
+    name,
+    assembled,
+    geometry: assembled.geometry,
+    violations: checkOracle(normalized, assembled.geometry),
+    labelReport: assembled.labelReport
+  });
+  const adopted = /* @__PURE__ */ new Set();
+  let selected = candidateOf("baseline", assemble(route(normalized, placement, false)));
+  const consider = (candidate) => {
+    if (compareScore2(layoutScore(candidate), layoutScore(selected)) < 0) {
+      selected = candidate;
+      adopted.add(candidate.name);
+    }
   };
-  const baseline = finish(assemble(route(normalized, placement, false)));
-  const improved = finish(assemble(route(normalized, placement, true)));
-  const picked = compareScore2(layoutScore(improved), layoutScore(baseline)) < 0 ? improved : baseline;
-  const readability = picked === improved;
-  const refinedAssembled = improveRouting(
-    normalized,
-    placement,
-    readability,
-    assemble,
-    picked.assembled
-  );
-  const unchanged = refinedAssembled.geometry.edges === picked.geometry.edges;
-  const refined = unchanged ? picked : finish(refinedAssembled);
-  const symbolicSelected = unchanged || compareScore2(layoutScore(refined), layoutScore(picked)) < 0 ? refined : picked;
-  const oarspGeometry = improveDataAssociations(symbolicSelected.geometry);
-  let selected = symbolicSelected;
-  if (oarspGeometry !== symbolicSelected.geometry) {
+  consider(candidateOf("improved", assemble(route(normalized, placement, true))));
+  const readability = adopted.has("improved");
+  const refinedAssembled = improveRouting(normalized, placement, readability, assemble, selected.assembled);
+  if (refinedAssembled.geometry.edges !== selected.geometry.edges) consider(candidateOf("refined", refinedAssembled));
+  const oarspGeometry = improveDataAssociations(selected.geometry);
+  if (oarspGeometry !== selected.geometry) {
     computeHops(oarspGeometry.edges);
     const labelReport = placeEdgeLabels(oarspGeometry);
-    const candidate = {
-      assembled: { ...symbolicSelected.assembled, geometry: oarspGeometry, labelReport },
-      geometry: oarspGeometry,
-      violations: checkOracle(normalized, oarspGeometry),
-      labelReport
-    };
-    if (compareScore2(layoutScore(candidate), layoutScore(symbolicSelected)) < 0) selected = candidate;
+    consider(candidateOf("oarsp", { ...selected.assembled, geometry: oarspGeometry, labelReport }));
   }
   const geometry = selected.geometry;
   const edges = geometry.edges;
-  if (picked === improved) {
+  if (adopted.has("improved")) {
     diags.push({ level: "info", code: "N-431", message: "\u5168\u4F53\u53EF\u8AAD\u6027\u30B9\u30B3\u30A2\u306B\u3088\u308A\u6539\u5584\u7D4C\u8DEF\u3092\u63A1\u7528" });
   }
-  if (selected !== symbolicSelected) {
+  if (adopted.has("oarsp")) {
     diags.push({ level: "info", code: "N-434", message: "Data Association \u306E\u76F4\u4EA4\u53EF\u8996\u30B0\u30E9\u30D5\u7D4C\u8DEF\u3092\u63A1\u7528" });
   }
   const poolOfNode = buildPoolIndex(normalized).poolOfNode;

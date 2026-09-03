@@ -97,41 +97,43 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     const labelReport = placeEdgeLabels(geometry);
     return { plan: planL, geometry, coords, titleShift, labelReport };
   };
-  const finish = (assembled: ReturnType<typeof assemble>) => {
-    const geometry = assembled.geometry;
-    return { assembled, geometry, violations: checkOracle(normalized, geometry), labelReport: assembled.labelReport };
+  // 候補の選定: 基準経路から始め、後段の候補はそれぞれ「現在の採用より layoutScore が良いときだけ」
+  // 置き換える。候補は前の採用結果を入力に作られるので順序は固定(改善経路 → 精錬 → データ関連)。
+  interface Candidate {
+    name: string;
+    assembled: ReturnType<typeof assemble>;
+    geometry: Geometry;
+    violations: Diagnostic[];
+    labelReport: ReturnType<typeof assemble>['labelReport'];
+  }
+  const candidateOf = (name: string, assembled: ReturnType<typeof assemble>): Candidate => ({
+    name, assembled, geometry: assembled.geometry,
+    violations: checkOracle(normalized, assembled.geometry), labelReport: assembled.labelReport,
+  });
+  const adopted = new Set<string>();
+  let selected = candidateOf('baseline', assemble(route(normalized, placement, false)));
+  const consider = (candidate: Candidate) => {
+    if (compareScore(layoutScore(candidate), layoutScore(selected)) < 0) {
+      selected = candidate;
+      adopted.add(candidate.name);
+    }
   };
-  const baseline = finish(assemble(route(normalized, placement, false)));
-  const improved = finish(assemble(route(normalized, placement, true)));
-  const picked = compareScore(layoutScore(improved), layoutScore(baseline)) < 0 ? improved : baseline;
-  const readability = picked === improved;
-  const refinedAssembled = improveRouting(
-    normalized, placement, readability, assemble, picked.assembled,
-  );
-  const unchanged = refinedAssembled.geometry.edges === picked.geometry.edges;
-  const refined = unchanged ? picked : finish(refinedAssembled);
-  const symbolicSelected = unchanged || compareScore(layoutScore(refined), layoutScore(picked)) < 0
-    ? refined
-    : picked;
-  const oarspGeometry = improveDataAssociations(symbolicSelected.geometry);
-  let selected = symbolicSelected;
-  if (oarspGeometry !== symbolicSelected.geometry) {
+  consider(candidateOf('improved', assemble(route(normalized, placement, true))));
+  const readability = adopted.has('improved');
+  const refinedAssembled = improveRouting(normalized, placement, readability, assemble, selected.assembled);
+  if (refinedAssembled.geometry.edges !== selected.geometry.edges) consider(candidateOf('refined', refinedAssembled));
+  const oarspGeometry = improveDataAssociations(selected.geometry);
+  if (oarspGeometry !== selected.geometry) {
     computeHops(oarspGeometry.edges);
     const labelReport = placeEdgeLabels(oarspGeometry);
-    const candidate = {
-      assembled: { ...symbolicSelected.assembled, geometry: oarspGeometry, labelReport },
-      geometry: oarspGeometry,
-      violations: checkOracle(normalized, oarspGeometry),
-      labelReport,
-    };
-    if (compareScore(layoutScore(candidate), layoutScore(symbolicSelected)) < 0) selected = candidate;
+    consider(candidateOf('oarsp', { ...selected.assembled, geometry: oarspGeometry, labelReport }));
   }
   const geometry = selected.geometry;
   const edges = geometry.edges;
-  if (picked === improved) {
+  if (adopted.has('improved')) {
     diags.push({ level: 'info', code: 'N-431', message: '全体可読性スコアにより改善経路を採用' });
   }
-  if (selected !== symbolicSelected) {
+  if (adopted.has('oarsp')) {
     diags.push({ level: 'info', code: 'N-434', message: 'Data Association の直交可視グラフ経路を採用' });
   }
 
