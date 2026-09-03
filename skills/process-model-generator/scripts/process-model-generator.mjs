@@ -2316,8 +2316,8 @@ function assignRows(g, col, docIds) {
   return { row, laneRows, reserved };
 }
 
-// src/route.ts
-function route(g, p, optimizeReadability = false, options) {
+// src/route/context.ts
+function buildContext(g, p, optimizeReadability = false, options) {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const occupied = /* @__PURE__ */ new Map();
   for (const n of g.nodes) {
@@ -2343,7 +2343,7 @@ function route(g, p, optimizeReadability = false, options) {
     }
     if (optimizeReadability) globalChannel.set(`${lane.id}:${rows}`, pos++);
   }
-  const ctx = {
+  return {
     g,
     p,
     nodeById,
@@ -2366,369 +2366,6 @@ function route(g, p, optimizeReadability = false, options) {
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? /* @__PURE__ */ new Set()
   };
-  const plans = [];
-  for (const e of g.edges.slice().sort((a, b) => a.declIndex - b.declIndex)) {
-    const plan = e.fromPool || e.toPool ? planPoolMsg(ctx, e) : e.isReturn ? planReturn(ctx, e) : planForward(ctx, e);
-    plans.push(plan);
-    ctx.planned.set(e.id, plan);
-  }
-  const { poolGapTracks, poolGapRunTrack } = assignPoolGapTracks(ctx);
-  separateSharedEntries(ctx, plans, poolGapRunTrack);
-  bundleSameOrigin(ctx, plans);
-  const { gutterTracks, gutterRunTrack } = assignGutterTracks(ctx);
-  const { channelTracks, channelRunTrack } = assignChannelTracks(ctx);
-  return {
-    plans,
-    gutterTracks,
-    channelTracks,
-    channelRunTrack,
-    gutterRunTrack,
-    poolGapTracks,
-    poolGapRunTrack,
-    gutterLabelNeed: ctx.gutterLabelNeed,
-    poolExteriorGutter: ctx.poolExteriorGutter
-  };
-}
-function separateSharedEntries(ctx, plans, poolGapRunTrack) {
-  const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
-  const ladderRank = (plan, ownId, peerCol) => {
-    const pt = plan.points.find((q) => q.y.t === "poolChannel");
-    if (!pt || pt.y.t !== "poolChannel") return 0;
-    const t = poolGapRunTrack.get(pt.y.run) ?? 0;
-    const ownPool = ctx.pools.indexOfNode(ownId);
-    if (ownPool === void 0) return 0;
-    const isUpper = ownPool === pt.y.gap;
-    const dir = Math.sign(peerCol - (ctx.p.col.get(ownId) ?? 0));
-    const closeness = isUpper ? -t : t;
-    return dir * closeness;
-  };
-  const hasCorridorRun = (plan) => plan.points.some((q) => q.y.t === "poolChannel");
-  const groups = /* @__PURE__ */ new Map();
-  const add2 = (nodeId, side, axis, slot) => {
-    const key2 = `${nodeId}:${side}`;
-    const group2 = groups.get(key2) ?? { axis, nodeId, slots: [] };
-    group2.slots.push(slot);
-    groups.set(key2, group2);
-  };
-  for (const plan of plans) {
-    const e = edgeById.get(plan.edgeId);
-    if (!e) continue;
-    const toKind = ctx.nodeById.get(e.to)?.kind;
-    if (e.kind !== "seq") {
-      const boxLike = toKind === "task" || toKind === "doc" || toKind === "store" || toKind === "note";
-      if (boxLike && (plan.toSide === "top" || plan.toSide === "bottom")) {
-        const a = plan.points.at(-2)?.x, b = plan.points.at(-1)?.x;
-        if (a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.to && b.id === e.to) {
-          add2(e.to, plan.toSide, "x", { plan, end: "to" });
-        }
-      } else if ((toKind === "doc" || toKind === "store" || toKind === "note") && (plan.toSide === "left" || plan.toSide === "right")) {
-        const b = plan.points.at(-1)?.y;
-        if (plan.points.length >= 3 && b?.t === "portY" && b.id === e.to && b.side === plan.toSide) {
-          add2(e.to, plan.toSide, "y", { plan, end: "to" });
-        }
-      }
-      if (ctx.nodeById.get(e.from)?.kind === "task" && (plan.fromSide === "bottom" || plan.fromSide === "top")) {
-        const a = plan.points[0]?.x, b = plan.points[1]?.x;
-        if (a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.from && b.id === e.from) {
-          add2(e.from, plan.fromSide, "x", { plan, end: "from" });
-        }
-      }
-    }
-    if (toKind && (isGatewayKind(toKind) || isEventKind(toKind))) {
-      if (plan.toSide === "top" || plan.toSide === "bottom") {
-        const a = plan.points.at(-2)?.x, b = plan.points.at(-1)?.x;
-        const stub = a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.to && b.id === e.to;
-        const eventFace = isEventKind(toKind);
-        if (stub && (eventFace || e.kind === "seq" && plan.points.length >= 4)) {
-          add2(e.to, plan.toSide, "x", { plan, end: "to" });
-        }
-      } else if (e.kind === "seq" && plan.points.length >= 4 && (plan.toSide === "left" || plan.toSide === "right")) {
-        add2(e.to, plan.toSide, "y", { plan, end: "to" });
-      }
-    }
-  }
-  for (const { axis, nodeId, slots: group2 } of groups.values()) {
-    if (group2.length < 2) continue;
-    group2.sort((a, b) => {
-      const ea = edgeById.get(a.plan.edgeId), eb = edgeById.get(b.plan.edgeId);
-      const na = ctx.nodeById.get(a.end === "to" ? ea.from : ea.to);
-      const nb = ctx.nodeById.get(b.end === "to" ? eb.from : eb.to);
-      const ca = na ? axis === "x" ? ctx.p.col.get(na.id) : ctx.globalRow.get(rowKey(na.lane, ctx.p.row.get(na.id))) : ea.declIndex;
-      const cb = nb ? axis === "x" ? ctx.p.col.get(nb.id) : ctx.globalRow.get(rowKey(nb.lane, ctx.p.row.get(nb.id))) : eb.declIndex;
-      if (axis === "x" && na && nb && hasCorridorRun(a.plan) && hasCorridorRun(b.plan)) {
-        const ra = ladderRank(a.plan, nodeId, ca);
-        const rb = ladderRank(b.plan, nodeId, cb);
-        if (ra !== rb) return ra - rb;
-      }
-      if (ca !== cb) return ca - cb;
-      return ea.declIndex - eb.declIndex;
-    });
-    const kind = ctx.nodeById.get(nodeId)?.kind;
-    const gw = kind !== void 0 && isGatewayKind(kind);
-    const limit = gw ? 14 : axis === "x" ? 10 : 8;
-    const stepMax = gw ? 24 : 12;
-    const step = Math.min(stepMax, 2 * limit / (group2.length - 1));
-    group2.forEach(({ plan, end }, i) => {
-      const offset = (i - (group2.length - 1) / 2) * step;
-      if (axis === "x") {
-        const a = end === "to" ? plan.points.length - 2 : 0;
-        plan.points[a].x = nodeCX(nodeId, offset);
-        plan.points[a + 1].x = nodeCX(nodeId, offset);
-      } else if (end === "from") {
-        const base = plan.points[0]?.y.t === "nodeCY" ? plan.points[0].y.offset ?? 0 : 0;
-        plan.points[0].y = nodeCY(nodeId, base + offset);
-        if (plan.points[1]?.y.t === "nodeCY") plan.points[1].y = nodeCY(nodeId, base + offset);
-      } else {
-        plan.points.at(-2).y = nodeCY(nodeId, offset);
-        plan.points.at(-1).y = nodeCY(nodeId, offset);
-      }
-    });
-  }
-}
-function bundleSameOrigin(ctx, plans) {
-  const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
-  const groups = /* @__PURE__ */ new Map();
-  for (const plan of plans) {
-    const e = edgeById.get(plan.edgeId);
-    if (!e || e.kind !== "assoc") continue;
-    const src = ctx.nodeById.get(e.from);
-    if (!src || isGw(src)) continue;
-    const key2 = `${e.from}|${e.kind}|${plan.fromSide}`;
-    const list = groups.get(key2) ?? [];
-    list.push(plan);
-    groups.set(key2, list);
-  }
-  for (const raw of groups.values()) {
-    const group2 = raw.filter((plan) => plan.points.length >= 3);
-    if (group2.length < 2) continue;
-    if (group2[0]?.fromSide !== "right") continue;
-    if (!group2.every((plan) => ctx.nodeById.get(edgeById.get(plan.edgeId).to)?.kind === "store")) continue;
-    group2.sort((a, b) => a.edgeId.localeCompare(b.edgeId));
-    offsetOriginStubs(group2);
-    shareOriginTrunk(group2);
-  }
-}
-function offsetOriginStubs(group2) {
-  if (group2[0]?.fromSide !== "right") return;
-  const n = group2.length;
-  const step = Math.min(12, 16 / (n - 1));
-  group2.forEach((plan, i) => {
-    const offset = (i - (n - 1) / 2) * step;
-    const p0 = plan.points[0];
-    const p1 = plan.points[1];
-    if (!p0 || p0.y.t !== "nodeCY") return;
-    const base = p0.y.offset ?? 0;
-    const id = p0.y.id;
-    p0.y = nodeCY(id, base + offset);
-    if (p1?.y.t === "nodeCY" && p1.y.id === id) p1.y = nodeCY(id, base + offset);
-  });
-}
-function shareOriginTrunk(group2) {
-  const donor = group2.find((plan) => plan.points.some((pt) => pt.x.t === "gutter" || pt.y.t === "channel"));
-  if (!donor) return;
-  const donorGutterPoint = donor.points.find((pt) => pt.x.t === "gutter" && pt.x.side === "exit");
-  const donorGutter = donorGutterPoint?.x.t === "gutter" ? donorGutterPoint.x : void 0;
-  const donorTrunkY = donor.points.find((pt, i) => i >= 2 && (pt.y.t === "channel" || pt.y.t === "rowMid"))?.y;
-  if (!donorGutter && !donorTrunkY) return;
-  const sameY = (a, b) => a.t === b.t && JSON.stringify(a) === JSON.stringify(b);
-  for (const plan of group2) {
-    if (plan === donor) continue;
-    if (donorGutter) {
-      for (const pt of plan.points) {
-        if (pt.x.t === "gutter" && pt.x.side === "exit" && pt.x.g === donorGutter.g) pt.x = donorGutter;
-      }
-    }
-    if (!donorTrunkY) continue;
-    for (let i = 1; i + 1 < plan.points.length; i++) {
-      const a = plan.points[i];
-      const b = plan.points[i + 1];
-      if (!sameY(a.y, b.y)) continue;
-      if (a.y.t !== "channel" && a.y.t !== "rowMid") continue;
-      a.y = donorTrunkY;
-      b.y = donorTrunkY;
-      break;
-    }
-  }
-}
-function assignPoolGapTracks(ctx) {
-  const poolGapTracks = /* @__PURE__ */ new Map();
-  const poolGapRunTrack = /* @__PURE__ */ new Map();
-  for (const [gap, runs] of ctx.poolGapRuns) {
-    const placed = [];
-    const score2 = (r) => {
-      let n = 0;
-      for (const other of runs) {
-        if (other.runId === r.runId) continue;
-        if (r.upperX >= other.a && r.upperX <= other.b) n--;
-        if (r.lowerX >= other.a && r.lowerX <= other.b) n++;
-      }
-      return n;
-    };
-    const before = (p, r) => p.runId !== r.runId && (p.upperX >= r.a && p.upperX <= r.b || r.lowerX >= p.a && r.lowerX <= p.b);
-    const preds = /* @__PURE__ */ new Map();
-    for (const r of runs) {
-      preds.set(r.runId, runs.filter((p) => before(p, r) && !before(r, p)));
-    }
-    const remaining = runs.slice().sort((a, b) => score2(a) - score2(b) || a.runId - b.runId);
-    const done = /* @__PURE__ */ new Set();
-    const place2 = (r) => {
-      let t = Math.max(0, ...(preds.get(r.runId) ?? []).filter((p) => done.has(p.runId)).map((p) => poolGapRunTrack.get(p.runId) + 1));
-      while (placed.some((p) => p.t === t && p.run.a <= r.b && r.a <= p.run.b)) t++;
-      placed.push({ run: r, t });
-      poolGapRunTrack.set(r.runId, t);
-      done.add(r.runId);
-      poolGapTracks.set(gap, Math.max(poolGapTracks.get(gap) ?? 0, t + 1));
-    };
-    while (remaining.length > 0) {
-      const i = remaining.findIndex((r2) => (preds.get(r2.runId) ?? []).every((p) => done.has(p.runId)));
-      const r = remaining.splice(i >= 0 ? i : 0, 1)[0];
-      place2(r);
-    }
-  }
-  return { poolGapTracks, poolGapRunTrack };
-}
-function gutterRunEnds(ctx) {
-  const rowPosOf = (id) => {
-    const n = ctx.nodeById.get(id);
-    const host = n && isAttachedBoundary(n) && n.attachedTo ? ctx.nodeById.get(n.attachedTo) ?? n : n;
-    if (!host) return 0;
-    return ctx.globalRow.get(rowKey(host.lane, ctx.p.row.get(host.id) ?? 0)) ?? 0;
-  };
-  const rank = (y) => {
-    switch (y.t) {
-      case "rowMid":
-        return ctx.globalRow.get(rowKey(y.lane, y.row)) ?? 0;
-      case "nodeCY":
-        return rowPosOf(y.id) + (y.offset ?? 0) / 1e3;
-      case "portY": {
-        const n = ctx.nodeById.get(y.id);
-        const edge = n && isAttachedBoundary(n) ? n.boundarySide === "top" ? -0.1 : 0.1 : 0;
-        const face = y.side === "top" ? -0.05 : y.side === "bottom" ? 0.05 : 0;
-        return rowPosOf(y.id) + edge + face;
-      }
-      case "portStubY":
-        return rowPosOf(y.id) + (y.side === "top" ? -1 : 1) * (0.05 + y.offset / 1e3);
-      case "channel":
-        return ctx.globalChannel.get(rowKey(y.lane, y.row)) ?? 0;
-      case "poolChannel":
-        return ctx.globalPoolGap.get(y.gap) ?? 0;
-      case "laneEdge":
-        return (ctx.globalRow.get(rowKey(y.lane, 0)) ?? 0) + (y.edge === "top" ? -0.5 : 0.5);
-    }
-  };
-  const colOf = (id) => {
-    const n = ctx.nodeById.get(id);
-    const host = n && isAttachedBoundary(n) && n.attachedTo ? n.attachedTo : id;
-    return ctx.p.col.get(host) ?? 0;
-  };
-  const sideOf = (x, g, side) => {
-    if (x.t === "gutter") {
-      if (x.g !== g) return x.g < g ? "left" : "right";
-      if (x.side === side) return "same";
-      return x.side === "exit" ? "left" : "right";
-    }
-    return colOf(x.id) < g ? "left" : "right";
-  };
-  const out = /* @__PURE__ */ new Map();
-  for (const plan of ctx.planned.values()) {
-    const pts = plan.points;
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const x0 = pts[i].x;
-      const x1 = pts[i + 1].x;
-      if (x0.t !== "gutter" || x1.t !== "gutter" || x0.run !== x1.run) continue;
-      const y0 = rank(pts[i].y);
-      const y1 = rank(pts[i + 1].y);
-      const ends = { lo: Math.min(y0, y1), hi: Math.max(y0, y1), left: [], right: [] };
-      const prev = pts[i - 1];
-      const next = pts[i + 2];
-      if (prev) {
-        const s = sideOf(prev.x, x0.g, x0.side);
-        if (s !== "same") ends[s].push(y0);
-      }
-      if (next) {
-        const s = sideOf(next.x, x0.g, x0.side);
-        if (s !== "same") ends[s].push(y1);
-      }
-      out.set(x0.run, ends);
-    }
-  }
-  return out;
-}
-function assignGutterTracks(ctx) {
-  const gutterTracks = /* @__PURE__ */ new Map();
-  const gutterRunTrack = /* @__PURE__ */ new Map();
-  const ends = gutterRunEnds(ctx);
-  const inside2 = (y, r) => y > r.lo && y < r.hi;
-  const crossLeftOf = (p, q) => {
-    const P = ends.get(p);
-    const Q = ends.get(q);
-    if (!P || !Q) return 0;
-    let n = 0;
-    for (const y of Q.left) if (inside2(y, P)) n++;
-    for (const y of P.right) if (inside2(y, Q)) n++;
-    return n;
-  };
-  for (const [key2, runs] of ctx.gutterRuns) {
-    const i = key2.lastIndexOf(":");
-    const gi = Number(key2.slice(0, i));
-    const side = key2.slice(i + 1);
-    const score2 = /* @__PURE__ */ new Map();
-    for (const r of runs) {
-      let s = 0;
-      for (const o of runs) {
-        if (o.runId === r.runId) continue;
-        s += crossLeftOf(r.runId, o.runId) - crossLeftOf(o.runId, r.runId);
-      }
-      score2.set(r.runId, s);
-    }
-    const sorted = runs.slice().sort((x, y) => score2.get(x.runId) - score2.get(y.runId) || x.b - x.a - (y.b - y.a) || x.runId - y.runId);
-    const placed = [];
-    let count = 0;
-    for (const r of sorted) {
-      let t = 0;
-      while (placed.some((p) => p.t === t && p.a <= r.b && r.a <= p.b)) t++;
-      placed.push({ a: r.a, b: r.b, t });
-      gutterRunTrack.set(r.runId, t);
-      count = Math.max(count, t + 1);
-    }
-    const cur = gutterTracks.get(gi) ?? { exit: 0, entry: 0 };
-    cur[side] = Math.max(cur[side], count);
-    gutterTracks.set(gi, cur);
-  }
-  return { gutterTracks, gutterRunTrack };
-}
-function assignChannelTracks(ctx) {
-  const channelTracks = /* @__PURE__ */ new Map();
-  const channelRunTrack = /* @__PURE__ */ new Map();
-  for (const [key2, runs] of ctx.channelRuns) {
-    const contains = (list) => (r) => list.filter((o) => o.runId !== r.runId && o.entryX > r.a && o.entryX < r.b).length;
-    const aboveList = runs.filter((r) => r.side === "above");
-    const belowList = runs.filter((r) => r.side === "below");
-    const cAbove = contains(aboveList);
-    const cBelow = contains(belowList);
-    const above = aboveList.sort((x, y) => cAbove(x) - cAbove(y) || x.depth - y.depth || x.runId - y.runId);
-    const below = belowList.sort((x, y) => cBelow(x) - cBelow(y) || y.depth - x.depth || x.runId - y.runId);
-    const firstFit = (list) => {
-      const placed = [];
-      const out = /* @__PURE__ */ new Map();
-      for (const r of list) {
-        let t = 0;
-        while (placed.some((p) => p.t === t && p.a <= r.b && r.a <= p.b)) t++;
-        placed.push({ a: r.a, b: r.b, t });
-        out.set(r.runId, t);
-      }
-      return out;
-    };
-    const aboveT = firstFit(above);
-    const belowT = firstFit(below);
-    const topCount = Math.max(0, ...[...aboveT.values()].map((t) => t + 1));
-    const bottomCount = Math.max(0, ...[...belowT.values()].map((t) => t + 1));
-    const total = topCount + bottomCount;
-    for (const [runId, t] of aboveT) channelRunTrack.set(runId, t);
-    for (const [runId, t] of belowT) channelRunTrack.set(runId, total - 1 - t);
-    channelTracks.set(key2, total);
-  }
-  return { channelTracks, channelRunTrack };
 }
 var rowKey = (lane, row) => `${lane}:${row}`;
 function nodeBetweenOnRow(ctx, lane, row, c0, c1) {
@@ -2838,6 +2475,27 @@ function allocPoolGap(ctx, gap, upperX, lowerX) {
   runs.push({ a, b, upperX, lowerX, runId });
   return runId;
 }
+function cellOf(ctx, id) {
+  const n = ctx.nodeById.get(id);
+  return { lane: n.lane, row: ctx.p.row.get(id), col: ctx.p.col.get(id), node: n };
+}
+function gapOrderConsistent(ctx, col, mine) {
+  for (const r of ctx.colRuns.get(col) ?? []) {
+    if (!r.gap || r.gap.upperSide === mine.upperSide) continue;
+    const P = mine.upperSide ? mine : r.gap;
+    const Q = mine.upperSide ? r.gap : mine;
+    const reverse = Q.upperX >= P.a && Q.upperX <= P.b || P.lowerX >= Q.a && P.lowerX <= Q.b;
+    if (reverse) return false;
+  }
+  return true;
+}
+function noteLabelNeed(ctx, e, gi) {
+  if (!e.label) return;
+  const w = measureText(e.label, EDGE_FONT_SIZE) + 12;
+  ctx.gutterLabelNeed.set(gi, Math.max(ctx.gutterLabelNeed.get(gi) ?? 0, w));
+}
+
+// src/route/symbols.ts
 var portX = (id, side) => ({ t: "portX", id, side });
 var portY = (id, side) => ({ t: "portY", id, side });
 var portStubY = (id, side, offset = 16) => ({ t: "portStubY", id, side, offset });
@@ -2847,10 +2505,8 @@ var nodeCY = (id, offset = 0) => ({ t: "nodeCY", id, offset });
 var channelY = (lane, row, run) => ({ t: "channel", lane, row, run });
 var poolChannelY = (gap, run) => ({ t: "poolChannel", gap, run });
 var rowMidY = (lane, row) => ({ t: "rowMid", lane, row });
-function cellOf(ctx, id) {
-  const n = ctx.nodeById.get(id);
-  return { lane: n.lane, row: ctx.p.row.get(id), col: ctx.p.col.get(id), node: n };
-}
+
+// src/route/predicates.ts
 var isGw = (n) => isGatewayKind(n.kind);
 var hasSequenceOut = (ctx, id) => ctx.g.edges.some((e) => e.from === id && e.kind === "seq");
 var needsBottomMessagePort = (ctx, id) => hasSequenceOut(ctx, id) && ctx.g.edges.some((e) => e.from === id && e.kind === "msg" && !e.toPool);
@@ -2887,16 +2543,6 @@ function topFree(ctx, u) {
   }
   return true;
 }
-function gapOrderConsistent(ctx, col, mine) {
-  for (const r of ctx.colRuns.get(col) ?? []) {
-    if (!r.gap || r.gap.upperSide === mine.upperSide) continue;
-    const P = mine.upperSide ? mine : r.gap;
-    const Q = mine.upperSide ? r.gap : mine;
-    const reverse = Q.upperX >= P.a && Q.upperX <= P.b || P.lowerX >= Q.a && P.lowerX <= Q.b;
-    if (reverse) return false;
-  }
-  return true;
-}
 function westFree(ctx, v, e) {
   let crossRow = 0;
   for (const o of ctx.g.edges) {
@@ -2928,11 +2574,563 @@ function sameRowSource(ctx, e2, u) {
   const s = ctx.nodeById.get(e2.from);
   return !!s && s.lane === u.lane && ctx.p.row.get(s.id) === u.row;
 }
-function noteLabelNeed(ctx, e, gi) {
-  if (!e.label) return;
-  const w = measureText(e.label, EDGE_FONT_SIZE) + 12;
-  ctx.gutterLabelNeed.set(gi, Math.max(ctx.gutterLabelNeed.get(gi) ?? 0, w));
+function fallbackRightY(e, fromId) {
+  if (e.kind === "seq") return portY(fromId, "right");
+  return nodeCY(fromId, e.kind === "msg" ? 8 : 10);
 }
+function adjacentPoolGap(ctx, u, v) {
+  const pair = poolPairIndices(ctx, u, v);
+  if (!pair) return void 0;
+  const [ui, vi] = pair;
+  return Math.abs(ui - vi) === 1 ? Math.min(ui, vi) : void 0;
+}
+function poolPairIndices(ctx, u, v) {
+  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
+  const vi = ctx.pools.indexOf(ctx.pools.poolOfLane(v.lane));
+  return ui !== void 0 && vi !== void 0 ? [ui, vi] : void 0;
+}
+function alternativeBelow(ctx, u) {
+  const ownPool = ctx.pools.poolOfLane(u.lane);
+  const ownIndex = ctx.pools.indexOf(ownPool);
+  if (ownIndex === void 0) return true;
+  const nodePool = (id) => ctx.pools.poolOfNode(id);
+  let above = 0;
+  let below = 0;
+  for (const e of ctx.g.edges) {
+    if (e.kind !== "msg") continue;
+    const fromPool = e.fromPool ?? nodePool(e.from);
+    const toPool = e.toPool ?? nodePool(e.to);
+    if (fromPool !== ownPool && toPool !== ownPool) continue;
+    const other = fromPool === ownPool ? toPool : fromPool;
+    const oi = ctx.pools.indexOf(other);
+    if (oi === void 0) continue;
+    if (oi < ownIndex) above++;
+    if (oi > ownIndex) below++;
+  }
+  return above >= below;
+}
+function noDownwardOut(ctx, v, vRowPos) {
+  for (const e2 of ctx.g.edges) {
+    if (e2.from !== v.node.id || e2.isReturn) continue;
+    if (e2.toPool) {
+      const lane = blackboxLane(ctx, e2.toPool);
+      const bandPos = lane === void 0 ? void 0 : ctx.globalRow.get(rowKey(lane, 0));
+      if (bandPos !== void 0 && bandPos > vRowPos) return false;
+      continue;
+    }
+    const t = ctx.nodeById.get(e2.to);
+    if (!t) continue;
+    const tPos = ctx.globalRow.get(rowKey(t.lane, ctx.p.row.get(t.id)));
+    if (tPos > vRowPos) return false;
+  }
+  return true;
+}
+function bottomOutFree(ctx, v, vRowPos) {
+  for (const e2 of ctx.g.edges) {
+    if (e2.from !== v.node.id || e2.isReturn) continue;
+    if (e2.toPool) {
+      const lane = blackboxLane(ctx, e2.toPool);
+      const bandPos = lane === void 0 ? void 0 : ctx.globalRow.get(rowKey(lane, 0));
+      if (bandPos !== void 0 && bandPos > vRowPos) return false;
+      continue;
+    }
+    const t = ctx.nodeById.get(e2.to);
+    if (!t) continue;
+    const tPos = ctx.globalRow.get(rowKey(t.lane, ctx.p.row.get(t.id)));
+    if (tPos <= vRowPos) continue;
+    if (e2.kind === "assoc" || e2.kind === "msg") {
+      if (v.node.kind === "task") continue;
+      return false;
+    }
+    if (e2.kind === "seq" && isGw(v.node) && !e2.onSpine) return false;
+  }
+  return true;
+}
+
+// src/route/patterns-message.ts
+function planAcrossPoolGap(ctx, e, u, v, gap) {
+  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
+  const down = ui === gap;
+  const gapPos = ctx.globalPoolGap.get(gap);
+  const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
+  const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
+  const z = planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down);
+  if (z) return z;
+  const rightward = v.col > u.col;
+  const sameCol = v.col === u.col;
+  let fromSide = sameCol ? "right" : rightward ? "left" : "right";
+  let toSide = sameCol ? "left" : rightward ? "left" : "right";
+  let srcG = fromSide === "left" ? u.col : u.col + 1;
+  let dstG = toSide === "left" ? v.col : v.col + 1;
+  if (ctx.gapDestFlip.has(e.id)) {
+    toSide = toSide === "left" ? "right" : "left";
+    dstG = toSide === "left" ? v.col : v.col + 1;
+  }
+  const srcYOffset = down ? 8 : -8;
+  const stub = (side, c, g) => side === "left" ? [gutterScale(g), c] : [c, gutterScale(g)];
+  if (!reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(fromSide, u.col, srcG), e)) {
+    const altSide = fromSide === "left" ? "right" : "left";
+    const altG = altSide === "left" ? u.col : u.col + 1;
+    if (reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(altSide, u.col, altG), e)) {
+      fromSide = altSide;
+      srcG = altG;
+    }
+  }
+  let dstMagnitude = toSide === "left" ? 12 : 14;
+  let dstYOffset = down ? -dstMagnitude : dstMagnitude;
+  if (!reserveStubRun(ctx, v.lane, v.row, dstYOffset, ...stub(toSide, v.col, dstG), e)) {
+    const altSide = toSide === "left" ? "right" : "left";
+    const altG = altSide === "left" ? v.col : v.col + 1;
+    const altMag = altSide === "left" ? 12 : 14;
+    const altOffset = down ? -altMag : altMag;
+    if (reserveStubRun(ctx, v.lane, v.row, altOffset, ...stub(altSide, v.col, altG), e)) {
+      toSide = altSide;
+      dstG = altG;
+      dstMagnitude = altMag;
+      dstYOffset = altOffset;
+    }
+  }
+  const srcRun = allocGutter(ctx, srcG, "exit", gU, gapPos);
+  const dstRun = allocGutter(ctx, dstG, "entry", gapPos, gV);
+  const srcScale = srcG - 0.5;
+  const dstScale = dstG - 0.5;
+  const run = allocPoolGap(ctx, gap, down ? srcScale : dstScale, down ? dstScale : srcScale);
+  return {
+    edgeId: e.id,
+    fromSide,
+    toSide,
+    pattern: "channel-approach",
+    points: [
+      { x: portX(e.from, fromSide), y: nodeCY(e.from, srcYOffset) },
+      { x: gutterX(srcG, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
+      { x: gutterX(srcG, "exit", srcRun), y: poolChannelY(gap, run) },
+      { x: gutterX(dstG, "entry", dstRun), y: poolChannelY(gap, run) },
+      { x: gutterX(dstG, "entry", dstRun), y: nodeCY(e.to, dstYOffset) },
+      { x: portX(e.to, toSide), y: nodeCY(e.to, dstYOffset) }
+    ]
+  };
+}
+function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
+  if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return void 0;
+  const otherMsg = (id) => ctx.g.edges.some((o) => o.id !== e.id && o.kind === "msg" && (o.from === id || o.to === id));
+  if (isGw(u.node) && otherMsg(u.node.id) || isGw(v.node) && otherMsg(v.node.id)) return void 0;
+  const bottomLabelFree = (n) => bottomFree(n) || eventLabelMovedUp(ctx, n.id);
+  const slotted = (n) => n.kind === "task";
+  const fromSide = down ? "bottom" : "top";
+  const toSide = down ? "top" : "bottom";
+  if (down) {
+    if (!bottomLabelFree(u.node)) return void 0;
+    if (isGw(u.node) && !bottomOutFree(ctx, u, gU)) return void 0;
+    if (eventLabelMovedUp(ctx, v.node.id)) return void 0;
+  } else {
+    if (!topFree(ctx, u) && !(slotted(u.node) && topUsersSlottable(ctx, u))) return void 0;
+    if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return void 0;
+    if (!bottomLabelFree(v.node)) return void 0;
+    if (v.node.kind !== "task" && eventHasBottomOut(ctx, v.node.id) && !isEventKind(v.node.kind)) return void 0;
+    if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return void 0;
+  }
+  const straight = u.col === v.col;
+  const pair = straight ? ctx.g.edges.find((o) => o.kind === "msg" && o.from === e.to && o.to === e.from) : void 0;
+  const pairPlan = pair ? ctx.planned.get(pair.id) : void 0;
+  const pairId = pair?.id;
+  const sameSourceMsg = (o) => o.kind === "msg" && o.from === u.node.id;
+  const sameTargetMsg = (o) => o.kind === "msg" && o.to === v.node.id;
+  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId, sameSourceMsg) && faceQuiet(ctx, v.node.id, toSide, e, pairId, sameTargetMsg))) return void 0;
+  const returnExitsFace = ctx.g.edges.some((o) => {
+    if (o.from !== u.node.id || o.kind !== "seq" || !o.isReturn) return false;
+    const done = ctx.planned.get(o.id);
+    return done ? done.fromSide === fromSide : true;
+  });
+  if (returnExitsFace) return void 0;
+  const shareU = !straight && slotted(u.node) ? u.node.id : void 0;
+  const shareV = !straight && slotted(v.node) ? v.node.id : void 0;
+  const gapRun = {
+    a: Math.min(u.col, v.col),
+    b: Math.max(u.col, v.col),
+    upperX: down ? u.col : v.col,
+    lowerX: down ? v.col : u.col
+  };
+  if (!straight) {
+    if (!gapOrderConsistent(ctx, u.col, { ...gapRun, upperSide: down })) return void 0;
+    if (!gapOrderConsistent(ctx, v.col, { ...gapRun, upperSide: !down })) return void 0;
+  }
+  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU, pairId)) return void 0;
+  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV, pairId)) return void 0;
+  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU, pairId);
+  if (straight) markExclusiveColRun(ctx, u.col);
+  else ctx.colRuns.get(u.col).at(-1).gap = { ...gapRun, upperSide: down };
+  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV, pairId);
+  if (straight) markExclusiveColRun(ctx, v.col);
+  else ctx.colRuns.get(v.col).at(-1).gap = { ...gapRun, upperSide: !down };
+  if (straight) {
+    const PAIR = 6;
+    const off = pair === void 0 ? 0 : pairPlan ? PAIR : -PAIR;
+    return {
+      edgeId: e.id,
+      fromSide,
+      toSide,
+      pattern: "drop",
+      points: [
+        { x: nodeCX(e.from, off), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.to, off), y: portY(e.to, toSide) }
+      ]
+    };
+  }
+  const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
+  return {
+    edgeId: e.id,
+    fromSide,
+    toSide,
+    pattern: "channel-approach",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+      { x: nodeCX(e.from), y: poolChannelY(gap, run) },
+      { x: nodeCX(e.to), y: poolChannelY(gap, run) },
+      { x: nodeCX(e.to), y: portY(e.to, toSide) }
+    ]
+  };
+}
+function planIntoBoundary(ctx, e, u, v, gU, gV) {
+  if (isAttachedBoundary(u.node)) return void 0;
+  const hostId = v.node.attachedTo;
+  const onTop = v.node.boundarySide === "top";
+  const toSide = onTop ? "top" : "bottom";
+  const gap = adjacentPoolGap(ctx, u, v);
+  const pair = poolPairIndices(ctx, u, v);
+  if (gap === void 0 && pair && pair[0] !== pair[1]) return void 0;
+  const down = gap !== void 0 ? ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane)) === gap : gU < gV;
+  const gx = v.col + 1;
+  const straightIn = () => {
+    if (down !== onTop) return void 0;
+    if (isGw(u.node)) return void 0;
+    const fromSide = down ? "bottom" : "top";
+    if (down) {
+      if (!(bottomFree(u.node) || eventLabelMovedUp(ctx, u.node.id))) return void 0;
+    } else {
+      if (!topFree(ctx, u) && !(u.node.kind === "task" && topUsersSlottable(ctx, u))) return void 0;
+      if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return void 0;
+    }
+    const shareU = u.node.kind === "task" ? u.node.id : void 0;
+    if (shareU === void 0 && !faceQuiet(ctx, u.node.id, fromSide, e)) return void 0;
+    const returnExitsFace = ctx.g.edges.some((o) => {
+      if (o.from !== u.node.id || o.kind !== "seq" || !o.isReturn) return false;
+      const done = ctx.planned.get(o.id);
+      return done ? done.fromSide === fromSide : true;
+    });
+    if (returnExitsFace) return void 0;
+    if (gap !== void 0) {
+      const gapPos = ctx.globalPoolGap.get(gap);
+      if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return void 0;
+      if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, hostId)) return void 0;
+      reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
+      reserveColRun(ctx, v.col, gapPos, gV, e, e.from, hostId);
+      const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
+      return {
+        edgeId: e.id,
+        fromSide,
+        toSide,
+        pattern: "channel-approach",
+        points: [
+          { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+          { x: nodeCX(e.from), y: poolChannelY(gap, run) },
+          { x: nodeCX(e.to), y: poolChannelY(gap, run) },
+          { x: nodeCX(e.to), y: portY(e.to, toSide) }
+        ]
+      };
+    }
+    if (!down) return void 0;
+    const chPos2 = ctx.globalChannel.get(rowKey(v.lane, v.row));
+    if (!(gU < chPos2)) return void 0;
+    if (!canReserveColRun(ctx, u.col, gU, chPos2, e.from, e.to, shareU)) return void 0;
+    reserveColRun(ctx, u.col, gU, chPos2, e, e.from, shareU);
+    const tCh2 = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
+    return {
+      edgeId: e.id,
+      fromSide,
+      toSide,
+      pattern: "channel-approach",
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
+        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
+        { x: nodeCX(e.to), y: portY(e.to, toSide) }
+      ]
+    };
+  };
+  const z = straightIn();
+  if (z) return z;
+  const stubY = portStubY(e.to, toSide);
+  const tail = (dstX) => [
+    { x: dstX, y: stubY },
+    { x: nodeCX(e.to), y: stubY },
+    { x: nodeCX(e.to), y: portY(e.to, toSide) }
+  ];
+  const pickSource = (yOffset) => {
+    const right = { side: "right", g: u.col + 1 };
+    if (reserveStubRun(ctx, u.lane, u.row, yOffset, u.col, gutterScale(right.g), e)) return right;
+    const left = { side: "left", g: u.col };
+    if (reserveStubRun(ctx, u.lane, u.row, yOffset, gutterScale(left.g), u.col, e)) return left;
+    return right;
+  };
+  if (gap !== void 0) {
+    const gapPos = ctx.globalPoolGap.get(gap);
+    const srcYOffset = down ? 8 : -8;
+    const src2 = pickSource(srcYOffset);
+    const srcRun = allocGutter(ctx, src2.g, "exit", gU, gapPos);
+    const dstRun = allocGutter(ctx, gx, "entry", gapPos, gV);
+    const run = allocPoolGap(ctx, gap, down ? gutterScale(src2.g) : gutterScale(gx), down ? gutterScale(gx) : gutterScale(src2.g));
+    return {
+      edgeId: e.id,
+      fromSide: src2.side,
+      toSide,
+      pattern: "channel-approach",
+      points: [
+        { x: portX(e.from, src2.side), y: nodeCY(e.from, srcYOffset) },
+        { x: gutterX(src2.g, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
+        { x: gutterX(src2.g, "exit", srcRun), y: poolChannelY(gap, run) },
+        { x: gutterX(gx, "entry", dstRun), y: poolChannelY(gap, run) },
+        ...tail(gutterX(gx, "entry", dstRun))
+      ]
+    };
+  }
+  const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  const src = pickSource(fallbackOffset(e));
+  const srcY = nodeCY(e.from, fallbackOffset(e));
+  const r1 = allocGutter(ctx, src.g, "exit", gU, chPos);
+  const tCh = allocChannel(
+    ctx,
+    v.lane,
+    v.row,
+    gutterScale(src.g),
+    gutterScale(gx),
+    gU < chPos ? "above" : "below",
+    gU,
+    gutterScale(src.g)
+  );
+  const r2 = allocGutter(ctx, gx, "entry", chPos, gV);
+  return {
+    edgeId: e.id,
+    fromSide: src.side,
+    toSide,
+    pattern: "channel-approach",
+    points: [
+      { x: portX(e.from, src.side), y: srcY },
+      { x: gutterX(src.g, "exit", r1), y: srcY },
+      { x: gutterX(src.g, "exit", r1), y: channelY(v.lane, v.row, tCh) },
+      { x: gutterX(gx, "entry", r2), y: channelY(v.lane, v.row, tCh) },
+      ...tail(gutterX(gx, "entry", r2))
+    ]
+  };
+}
+function planAcrossPoolExterior(ctx, e, u, v, ui, vi) {
+  const down = ui < vi;
+  const srcGap = down ? ui : ui - 1;
+  const dstGap = down ? vi - 1 : vi;
+  const srcGapPos = ctx.globalPoolGap.get(srcGap);
+  const dstGapPos = ctx.globalPoolGap.get(dstGap);
+  const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
+  const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
+  const srcG = u.col + 1;
+  const dstG = v.col + 1;
+  const outerG = ctx.p.maxCol + 2;
+  ctx.poolExteriorGutter = outerG;
+  const srcRun = allocGutter(ctx, srcG, "exit", gU, srcGapPos);
+  const dstRun = allocGutter(ctx, dstG, "entry", dstGapPos, gV);
+  const outerRun = allocGutter(ctx, outerG, "exit", srcGapPos, dstGapPos);
+  const srcPoolRun = allocPoolGap(ctx, srcGap, srcG - 0.5, outerG + 0.5);
+  const dstPoolRun = allocPoolGap(ctx, dstGap, outerG + 0.5, dstG - 0.5);
+  const srcYOffset = down ? 8 : -8;
+  const dstYOffset = down ? -14 : 14;
+  noteStubRun(ctx, u.lane, u.row, srcYOffset, u.col, gutterScale(srcG), e);
+  noteStubRun(ctx, v.lane, v.row, dstYOffset, v.col, gutterScale(dstG), e);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "right",
+    pattern: "channel-approach",
+    points: [
+      { x: portX(e.from, "right"), y: nodeCY(e.from, srcYOffset) },
+      { x: gutterX(srcG, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
+      { x: gutterX(srcG, "exit", srcRun), y: poolChannelY(srcGap, srcPoolRun) },
+      { x: gutterX(outerG, "exit", outerRun), y: poolChannelY(srcGap, srcPoolRun) },
+      { x: gutterX(outerG, "exit", outerRun), y: poolChannelY(dstGap, dstPoolRun) },
+      { x: gutterX(dstG, "entry", dstRun), y: poolChannelY(dstGap, dstPoolRun) },
+      { x: gutterX(dstG, "entry", dstRun), y: nodeCY(e.to, dstYOffset) },
+      { x: portX(e.to, "right"), y: nodeCY(e.to, dstYOffset) }
+    ]
+  };
+}
+function planMessageFromTopViaGutter(ctx, e, u, v, gU, chV) {
+  const chU = ctx.globalChannel.get(rowKey(u.lane, u.row));
+  if (chU === void 0 || !reserveColRun(ctx, u.col, chU, gU, e)) return void 0;
+  const g1 = u.col + 1;
+  noteLabelNeed(ctx, e, g1);
+  const tSrc = allocChannel(ctx, u.lane, u.row, u.col, g1 - 0.5, "below", gU, u.col);
+  const rGutter = allocGutter(ctx, g1, "exit", chU, chV);
+  const tDst = allocChannel(
+    ctx,
+    v.lane,
+    v.row,
+    g1 - 0.5,
+    v.col,
+    chU < chV ? "above" : "below",
+    chU,
+    g1 - 0.5
+  );
+  return {
+    edgeId: e.id,
+    fromSide: "top",
+    toSide: "top",
+    pattern: "channel-approach",
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, "top") },
+      { x: nodeCX(e.from), y: channelY(u.lane, u.row, tSrc) },
+      { x: gutterX(g1, "exit", rGutter), y: channelY(u.lane, u.row, tSrc) },
+      { x: gutterX(g1, "exit", rGutter), y: channelY(v.lane, v.row, tDst) },
+      { x: nodeCX(e.to), y: channelY(v.lane, v.row, tDst) },
+      { x: nodeCX(e.to), y: portY(e.to, "top") }
+    ]
+  };
+}
+function planPoolMsg(ctx, e) {
+  if (e.toPool) {
+    const u = cellOf(ctx, e.from);
+    const lane2 = blackboxLane(ctx, e.toPool);
+    const bandPos2 = ctx.globalRow.get(rowKey(lane2, 0));
+    const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
+    const below = bandPos2 > gU;
+    if (below && bottomFree(u.node) && reserveColRun(ctx, u.col, gU, bandPos2, e)) {
+      return {
+        edgeId: e.id,
+        fromSide: "bottom",
+        toSide: "top",
+        pattern: "drop",
+        points: [
+          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
+          { x: nodeCX(e.from), y: { t: "laneEdge", lane: lane2, edge: "top" } }
+        ]
+      };
+    }
+    const g1 = u.col + 1;
+    const run2 = allocGutter(ctx, g1, "exit", gU, bandPos2);
+    const srcY = fallbackRightY(e, e.from);
+    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
+    return {
+      edgeId: e.id,
+      fromSide: "right",
+      toSide: below ? "top" : "bottom",
+      pattern: "channel-approach",
+      points: [
+        { x: portX(e.from, "right"), y: srcY },
+        { x: gutterX(g1, "exit", run2), y: srcY },
+        { x: gutterX(g1, "exit", run2), y: { t: "laneEdge", lane: lane2, edge: below ? "top" : "bottom" } }
+      ]
+    };
+  }
+  const v = cellOf(ctx, e.to);
+  const lane = blackboxLane(ctx, e.fromPool);
+  const bandPos = ctx.globalRow.get(rowKey(lane, 0));
+  const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
+  const above = bandPos < gV;
+  if (!isEventKind(v.node.kind)) {
+    if (above && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
+      return {
+        edgeId: e.id,
+        fromSide: "bottom",
+        toSide: "top",
+        pattern: "drop",
+        points: [
+          { x: nodeCX(e.to), y: { t: "laneEdge", lane, edge: "bottom" } },
+          { x: nodeCX(e.to), y: portY(e.to, "top") }
+        ]
+      };
+    }
+    const chPos2 = ctx.globalChannel.get(rowKey(v.lane, v.row));
+    const gx2 = v.col + 1;
+    const run2 = allocGutter(ctx, gx2, "exit", bandPos, chPos2);
+    const tCh2 = allocChannel(ctx, v.lane, v.row, gx2 - 0.5, v.col, bandPos < chPos2 ? "above" : "below", bandPos, gx2 - 0.5);
+    return {
+      edgeId: e.id,
+      fromSide: above ? "bottom" : "top",
+      toSide: "top",
+      pattern: "channel-approach",
+      points: [
+        { x: gutterX(gx2, "exit", run2), y: { t: "laneEdge", lane, edge: above ? "bottom" : "top" } },
+        { x: gutterX(gx2, "exit", run2), y: channelY(v.lane, v.row, tCh2) },
+        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
+        { x: nodeCX(e.to), y: portY(e.to, "top") }
+      ]
+    };
+  }
+  const face = above ? "top" : "bottom";
+  const poolEdge = above ? "bottom" : "top";
+  const belowClear = !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`);
+  const faceOpen = face === "top" || eventBottomOpen(ctx, v.node) && belowClear;
+  const enter = faceOpen ? face : "top";
+  if ((enter === "top" ? above : !above) && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
+    return {
+      edgeId: e.id,
+      fromSide: poolEdge,
+      toSide: enter,
+      pattern: "drop",
+      points: [
+        { x: nodeCX(e.to), y: { t: "laneEdge", lane, edge: poolEdge } },
+        { x: nodeCX(e.to), y: portY(e.to, enter) }
+      ]
+    };
+  }
+  const gx = v.col + 1;
+  if (enter === "bottom") {
+    const belowRow = v.row + 1;
+    const belowCh = ctx.globalChannel.get(rowKey(v.lane, belowRow));
+    if (belowCh !== void 0) {
+      const run3 = allocGutter(ctx, gx, "exit", bandPos, belowCh);
+      const tCh2 = allocChannel(ctx, v.lane, belowRow, gx - 0.5, v.col, "below", bandPos, gx - 0.5);
+      return {
+        edgeId: e.id,
+        fromSide: poolEdge,
+        toSide: "bottom",
+        pattern: "channel-approach",
+        points: [
+          { x: gutterX(gx, "exit", run3), y: { t: "laneEdge", lane, edge: poolEdge } },
+          { x: gutterX(gx, "exit", run3), y: channelY(v.lane, belowRow, tCh2) },
+          { x: nodeCX(e.to), y: channelY(v.lane, belowRow, tCh2) },
+          { x: nodeCX(e.to), y: portY(e.to, "bottom") }
+        ]
+      };
+    }
+    const run2 = allocGutter(ctx, gx, "exit", bandPos, gV);
+    return {
+      edgeId: e.id,
+      fromSide: poolEdge,
+      toSide: "bottom",
+      pattern: "channel-approach",
+      points: [
+        { x: gutterX(gx, "exit", run2), y: { t: "laneEdge", lane, edge: poolEdge } },
+        { x: gutterX(gx, "exit", run2), y: portStubY(e.to, "bottom") },
+        { x: nodeCX(e.to), y: portStubY(e.to, "bottom") },
+        { x: nodeCX(e.to), y: portY(e.to, "bottom") }
+      ]
+    };
+  }
+  const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  const run = allocGutter(ctx, gx, "exit", bandPos, chPos);
+  const tCh = allocChannel(ctx, v.lane, v.row, gx - 0.5, v.col, bandPos < chPos ? "above" : "below", bandPos, gx - 0.5);
+  return {
+    edgeId: e.id,
+    fromSide: poolEdge,
+    toSide: "top",
+    pattern: "channel-approach",
+    points: [
+      { x: gutterX(gx, "exit", run), y: { t: "laneEdge", lane, edge: poolEdge } },
+      { x: gutterX(gx, "exit", run), y: channelY(v.lane, v.row, tCh) },
+      { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh) },
+      { x: nodeCX(e.to), y: portY(e.to, "top") }
+    ]
+  };
+}
+
+// src/route/patterns-forward.ts
 function planForward(ctx, e) {
   const u = cellOf(ctx, e.from);
   const v = cellOf(ctx, e.to);
@@ -3326,353 +3524,6 @@ function planForward(ctx, e) {
     ]
   };
 }
-function fallbackRightY(e, fromId) {
-  if (e.kind === "seq") return portY(fromId, "right");
-  return nodeCY(fromId, e.kind === "msg" ? 8 : 10);
-}
-function adjacentPoolGap(ctx, u, v) {
-  const pair = poolPairIndices(ctx, u, v);
-  if (!pair) return void 0;
-  const [ui, vi] = pair;
-  return Math.abs(ui - vi) === 1 ? Math.min(ui, vi) : void 0;
-}
-function poolPairIndices(ctx, u, v) {
-  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
-  const vi = ctx.pools.indexOf(ctx.pools.poolOfLane(v.lane));
-  return ui !== void 0 && vi !== void 0 ? [ui, vi] : void 0;
-}
-function alternativeBelow(ctx, u) {
-  const ownPool = ctx.pools.poolOfLane(u.lane);
-  const ownIndex = ctx.pools.indexOf(ownPool);
-  if (ownIndex === void 0) return true;
-  const nodePool = (id) => ctx.pools.poolOfNode(id);
-  let above = 0;
-  let below = 0;
-  for (const e of ctx.g.edges) {
-    if (e.kind !== "msg") continue;
-    const fromPool = e.fromPool ?? nodePool(e.from);
-    const toPool = e.toPool ?? nodePool(e.to);
-    if (fromPool !== ownPool && toPool !== ownPool) continue;
-    const other = fromPool === ownPool ? toPool : fromPool;
-    const oi = ctx.pools.indexOf(other);
-    if (oi === void 0) continue;
-    if (oi < ownIndex) above++;
-    if (oi > ownIndex) below++;
-  }
-  return above >= below;
-}
-function planAcrossPoolGap(ctx, e, u, v, gap) {
-  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
-  const down = ui === gap;
-  const gapPos = ctx.globalPoolGap.get(gap);
-  const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
-  const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
-  const z = planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down);
-  if (z) return z;
-  const rightward = v.col > u.col;
-  const sameCol = v.col === u.col;
-  let fromSide = sameCol ? "right" : rightward ? "left" : "right";
-  let toSide = sameCol ? "left" : rightward ? "left" : "right";
-  let srcG = fromSide === "left" ? u.col : u.col + 1;
-  let dstG = toSide === "left" ? v.col : v.col + 1;
-  if (ctx.gapDestFlip.has(e.id)) {
-    toSide = toSide === "left" ? "right" : "left";
-    dstG = toSide === "left" ? v.col : v.col + 1;
-  }
-  const srcYOffset = down ? 8 : -8;
-  const stub = (side, c, g) => side === "left" ? [gutterScale(g), c] : [c, gutterScale(g)];
-  if (!reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(fromSide, u.col, srcG), e)) {
-    const altSide = fromSide === "left" ? "right" : "left";
-    const altG = altSide === "left" ? u.col : u.col + 1;
-    if (reserveStubRun(ctx, u.lane, u.row, srcYOffset, ...stub(altSide, u.col, altG), e)) {
-      fromSide = altSide;
-      srcG = altG;
-    }
-  }
-  let dstMagnitude = toSide === "left" ? 12 : 14;
-  let dstYOffset = down ? -dstMagnitude : dstMagnitude;
-  if (!reserveStubRun(ctx, v.lane, v.row, dstYOffset, ...stub(toSide, v.col, dstG), e)) {
-    const altSide = toSide === "left" ? "right" : "left";
-    const altG = altSide === "left" ? v.col : v.col + 1;
-    const altMag = altSide === "left" ? 12 : 14;
-    const altOffset = down ? -altMag : altMag;
-    if (reserveStubRun(ctx, v.lane, v.row, altOffset, ...stub(altSide, v.col, altG), e)) {
-      toSide = altSide;
-      dstG = altG;
-      dstMagnitude = altMag;
-      dstYOffset = altOffset;
-    }
-  }
-  const srcRun = allocGutter(ctx, srcG, "exit", gU, gapPos);
-  const dstRun = allocGutter(ctx, dstG, "entry", gapPos, gV);
-  const srcScale = srcG - 0.5;
-  const dstScale = dstG - 0.5;
-  const run = allocPoolGap(ctx, gap, down ? srcScale : dstScale, down ? dstScale : srcScale);
-  return {
-    edgeId: e.id,
-    fromSide,
-    toSide,
-    pattern: "channel-approach",
-    points: [
-      { x: portX(e.from, fromSide), y: nodeCY(e.from, srcYOffset) },
-      { x: gutterX(srcG, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
-      { x: gutterX(srcG, "exit", srcRun), y: poolChannelY(gap, run) },
-      { x: gutterX(dstG, "entry", dstRun), y: poolChannelY(gap, run) },
-      { x: gutterX(dstG, "entry", dstRun), y: nodeCY(e.to, dstYOffset) },
-      { x: portX(e.to, toSide), y: nodeCY(e.to, dstYOffset) }
-    ]
-  };
-}
-function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
-  if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return void 0;
-  const otherMsg = (id) => ctx.g.edges.some((o) => o.id !== e.id && o.kind === "msg" && (o.from === id || o.to === id));
-  if (isGw(u.node) && otherMsg(u.node.id) || isGw(v.node) && otherMsg(v.node.id)) return void 0;
-  const bottomLabelFree = (n) => bottomFree(n) || eventLabelMovedUp(ctx, n.id);
-  const slotted = (n) => n.kind === "task";
-  const fromSide = down ? "bottom" : "top";
-  const toSide = down ? "top" : "bottom";
-  if (down) {
-    if (!bottomLabelFree(u.node)) return void 0;
-    if (isGw(u.node) && !bottomOutFree(ctx, u, gU)) return void 0;
-    if (eventLabelMovedUp(ctx, v.node.id)) return void 0;
-  } else {
-    if (!topFree(ctx, u) && !(slotted(u.node) && topUsersSlottable(ctx, u))) return void 0;
-    if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return void 0;
-    if (!bottomLabelFree(v.node)) return void 0;
-    if (v.node.kind !== "task" && eventHasBottomOut(ctx, v.node.id) && !isEventKind(v.node.kind)) return void 0;
-    if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return void 0;
-  }
-  const straight = u.col === v.col;
-  const pair = straight ? ctx.g.edges.find((o) => o.kind === "msg" && o.from === e.to && o.to === e.from) : void 0;
-  const pairPlan = pair ? ctx.planned.get(pair.id) : void 0;
-  const pairId = pair?.id;
-  const sameSourceMsg = (o) => o.kind === "msg" && o.from === u.node.id;
-  const sameTargetMsg = (o) => o.kind === "msg" && o.to === v.node.id;
-  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId, sameSourceMsg) && faceQuiet(ctx, v.node.id, toSide, e, pairId, sameTargetMsg))) return void 0;
-  const returnExitsFace = ctx.g.edges.some((o) => {
-    if (o.from !== u.node.id || o.kind !== "seq" || !o.isReturn) return false;
-    const done = ctx.planned.get(o.id);
-    return done ? done.fromSide === fromSide : true;
-  });
-  if (returnExitsFace) return void 0;
-  const shareU = !straight && slotted(u.node) ? u.node.id : void 0;
-  const shareV = !straight && slotted(v.node) ? v.node.id : void 0;
-  const gapRun = {
-    a: Math.min(u.col, v.col),
-    b: Math.max(u.col, v.col),
-    upperX: down ? u.col : v.col,
-    lowerX: down ? v.col : u.col
-  };
-  if (!straight) {
-    if (!gapOrderConsistent(ctx, u.col, { ...gapRun, upperSide: down })) return void 0;
-    if (!gapOrderConsistent(ctx, v.col, { ...gapRun, upperSide: !down })) return void 0;
-  }
-  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU, pairId)) return void 0;
-  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV, pairId)) return void 0;
-  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU, pairId);
-  if (straight) markExclusiveColRun(ctx, u.col);
-  else ctx.colRuns.get(u.col).at(-1).gap = { ...gapRun, upperSide: down };
-  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV, pairId);
-  if (straight) markExclusiveColRun(ctx, v.col);
-  else ctx.colRuns.get(v.col).at(-1).gap = { ...gapRun, upperSide: !down };
-  if (straight) {
-    const PAIR = 6;
-    const off = pair === void 0 ? 0 : pairPlan ? PAIR : -PAIR;
-    return {
-      edgeId: e.id,
-      fromSide,
-      toSide,
-      pattern: "drop",
-      points: [
-        { x: nodeCX(e.from, off), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.to, off), y: portY(e.to, toSide) }
-      ]
-    };
-  }
-  const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
-  return {
-    edgeId: e.id,
-    fromSide,
-    toSide,
-    pattern: "channel-approach",
-    points: [
-      { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-      { x: nodeCX(e.from), y: poolChannelY(gap, run) },
-      { x: nodeCX(e.to), y: poolChannelY(gap, run) },
-      { x: nodeCX(e.to), y: portY(e.to, toSide) }
-    ]
-  };
-}
-function planIntoBoundary(ctx, e, u, v, gU, gV) {
-  if (isAttachedBoundary(u.node)) return void 0;
-  const hostId = v.node.attachedTo;
-  const onTop = v.node.boundarySide === "top";
-  const toSide = onTop ? "top" : "bottom";
-  const gap = adjacentPoolGap(ctx, u, v);
-  const pair = poolPairIndices(ctx, u, v);
-  if (gap === void 0 && pair && pair[0] !== pair[1]) return void 0;
-  const down = gap !== void 0 ? ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane)) === gap : gU < gV;
-  const gx = v.col + 1;
-  const straightIn = () => {
-    if (down !== onTop) return void 0;
-    if (isGw(u.node)) return void 0;
-    const fromSide = down ? "bottom" : "top";
-    if (down) {
-      if (!(bottomFree(u.node) || eventLabelMovedUp(ctx, u.node.id))) return void 0;
-    } else {
-      if (!topFree(ctx, u) && !(u.node.kind === "task" && topUsersSlottable(ctx, u))) return void 0;
-      if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return void 0;
-    }
-    const shareU = u.node.kind === "task" ? u.node.id : void 0;
-    if (shareU === void 0 && !faceQuiet(ctx, u.node.id, fromSide, e)) return void 0;
-    const returnExitsFace = ctx.g.edges.some((o) => {
-      if (o.from !== u.node.id || o.kind !== "seq" || !o.isReturn) return false;
-      const done = ctx.planned.get(o.id);
-      return done ? done.fromSide === fromSide : true;
-    });
-    if (returnExitsFace) return void 0;
-    if (gap !== void 0) {
-      const gapPos = ctx.globalPoolGap.get(gap);
-      if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return void 0;
-      if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, hostId)) return void 0;
-      reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
-      reserveColRun(ctx, v.col, gapPos, gV, e, e.from, hostId);
-      const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
-      return {
-        edgeId: e.id,
-        fromSide,
-        toSide,
-        pattern: "channel-approach",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-          { x: nodeCX(e.from), y: poolChannelY(gap, run) },
-          { x: nodeCX(e.to), y: poolChannelY(gap, run) },
-          { x: nodeCX(e.to), y: portY(e.to, toSide) }
-        ]
-      };
-    }
-    if (!down) return void 0;
-    const chPos2 = ctx.globalChannel.get(rowKey(v.lane, v.row));
-    if (!(gU < chPos2)) return void 0;
-    if (!canReserveColRun(ctx, u.col, gU, chPos2, e.from, e.to, shareU)) return void 0;
-    reserveColRun(ctx, u.col, gU, chPos2, e, e.from, shareU);
-    const tCh2 = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
-    return {
-      edgeId: e.id,
-      fromSide,
-      toSide,
-      pattern: "channel-approach",
-      points: [
-        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
-        { x: nodeCX(e.to), y: portY(e.to, toSide) }
-      ]
-    };
-  };
-  const z = straightIn();
-  if (z) return z;
-  const stubY = portStubY(e.to, toSide);
-  const tail = (dstX) => [
-    { x: dstX, y: stubY },
-    { x: nodeCX(e.to), y: stubY },
-    { x: nodeCX(e.to), y: portY(e.to, toSide) }
-  ];
-  const pickSource = (yOffset) => {
-    const right = { side: "right", g: u.col + 1 };
-    if (reserveStubRun(ctx, u.lane, u.row, yOffset, u.col, gutterScale(right.g), e)) return right;
-    const left = { side: "left", g: u.col };
-    if (reserveStubRun(ctx, u.lane, u.row, yOffset, gutterScale(left.g), u.col, e)) return left;
-    return right;
-  };
-  if (gap !== void 0) {
-    const gapPos = ctx.globalPoolGap.get(gap);
-    const srcYOffset = down ? 8 : -8;
-    const src2 = pickSource(srcYOffset);
-    const srcRun = allocGutter(ctx, src2.g, "exit", gU, gapPos);
-    const dstRun = allocGutter(ctx, gx, "entry", gapPos, gV);
-    const run = allocPoolGap(ctx, gap, down ? gutterScale(src2.g) : gutterScale(gx), down ? gutterScale(gx) : gutterScale(src2.g));
-    return {
-      edgeId: e.id,
-      fromSide: src2.side,
-      toSide,
-      pattern: "channel-approach",
-      points: [
-        { x: portX(e.from, src2.side), y: nodeCY(e.from, srcYOffset) },
-        { x: gutterX(src2.g, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
-        { x: gutterX(src2.g, "exit", srcRun), y: poolChannelY(gap, run) },
-        { x: gutterX(gx, "entry", dstRun), y: poolChannelY(gap, run) },
-        ...tail(gutterX(gx, "entry", dstRun))
-      ]
-    };
-  }
-  const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
-  const src = pickSource(fallbackOffset(e));
-  const srcY = nodeCY(e.from, fallbackOffset(e));
-  const r1 = allocGutter(ctx, src.g, "exit", gU, chPos);
-  const tCh = allocChannel(
-    ctx,
-    v.lane,
-    v.row,
-    gutterScale(src.g),
-    gutterScale(gx),
-    gU < chPos ? "above" : "below",
-    gU,
-    gutterScale(src.g)
-  );
-  const r2 = allocGutter(ctx, gx, "entry", chPos, gV);
-  return {
-    edgeId: e.id,
-    fromSide: src.side,
-    toSide,
-    pattern: "channel-approach",
-    points: [
-      { x: portX(e.from, src.side), y: srcY },
-      { x: gutterX(src.g, "exit", r1), y: srcY },
-      { x: gutterX(src.g, "exit", r1), y: channelY(v.lane, v.row, tCh) },
-      { x: gutterX(gx, "entry", r2), y: channelY(v.lane, v.row, tCh) },
-      ...tail(gutterX(gx, "entry", r2))
-    ]
-  };
-}
-function planAcrossPoolExterior(ctx, e, u, v, ui, vi) {
-  const down = ui < vi;
-  const srcGap = down ? ui : ui - 1;
-  const dstGap = down ? vi - 1 : vi;
-  const srcGapPos = ctx.globalPoolGap.get(srcGap);
-  const dstGapPos = ctx.globalPoolGap.get(dstGap);
-  const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
-  const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
-  const srcG = u.col + 1;
-  const dstG = v.col + 1;
-  const outerG = ctx.p.maxCol + 2;
-  ctx.poolExteriorGutter = outerG;
-  const srcRun = allocGutter(ctx, srcG, "exit", gU, srcGapPos);
-  const dstRun = allocGutter(ctx, dstG, "entry", dstGapPos, gV);
-  const outerRun = allocGutter(ctx, outerG, "exit", srcGapPos, dstGapPos);
-  const srcPoolRun = allocPoolGap(ctx, srcGap, srcG - 0.5, outerG + 0.5);
-  const dstPoolRun = allocPoolGap(ctx, dstGap, outerG + 0.5, dstG - 0.5);
-  const srcYOffset = down ? 8 : -8;
-  const dstYOffset = down ? -14 : 14;
-  noteStubRun(ctx, u.lane, u.row, srcYOffset, u.col, gutterScale(srcG), e);
-  noteStubRun(ctx, v.lane, v.row, dstYOffset, v.col, gutterScale(dstG), e);
-  return {
-    edgeId: e.id,
-    fromSide: "right",
-    toSide: "right",
-    pattern: "channel-approach",
-    points: [
-      { x: portX(e.from, "right"), y: nodeCY(e.from, srcYOffset) },
-      { x: gutterX(srcG, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
-      { x: gutterX(srcG, "exit", srcRun), y: poolChannelY(srcGap, srcPoolRun) },
-      { x: gutterX(outerG, "exit", outerRun), y: poolChannelY(srcGap, srcPoolRun) },
-      { x: gutterX(outerG, "exit", outerRun), y: poolChannelY(dstGap, dstPoolRun) },
-      { x: gutterX(dstG, "entry", dstRun), y: poolChannelY(dstGap, dstPoolRun) },
-      { x: gutterX(dstG, "entry", dstRun), y: nodeCY(e.to, dstYOffset) },
-      { x: portX(e.to, "right"), y: nodeCY(e.to, dstYOffset) }
-    ]
-  };
-}
 function planFromBottomViaGutter(ctx, e, u, v, gU, chV) {
   const g1 = u.col + 1;
   noteLabelNeed(ctx, e, g1);
@@ -3696,38 +3547,6 @@ function planFromBottomViaGutter(ctx, e, u, v, gU, chV) {
       { x: nodeCX(e.from), y: portY(e.from, "bottom") },
       { x: nodeCX(e.from), y: portStubY(e.from, "bottom") },
       { x: gutterX(g1, "exit", rGutter), y: portStubY(e.from, "bottom") },
-      { x: gutterX(g1, "exit", rGutter), y: channelY(v.lane, v.row, tDst) },
-      { x: nodeCX(e.to), y: channelY(v.lane, v.row, tDst) },
-      { x: nodeCX(e.to), y: portY(e.to, "top") }
-    ]
-  };
-}
-function planMessageFromTopViaGutter(ctx, e, u, v, gU, chV) {
-  const chU = ctx.globalChannel.get(rowKey(u.lane, u.row));
-  if (chU === void 0 || !reserveColRun(ctx, u.col, chU, gU, e)) return void 0;
-  const g1 = u.col + 1;
-  noteLabelNeed(ctx, e, g1);
-  const tSrc = allocChannel(ctx, u.lane, u.row, u.col, g1 - 0.5, "below", gU, u.col);
-  const rGutter = allocGutter(ctx, g1, "exit", chU, chV);
-  const tDst = allocChannel(
-    ctx,
-    v.lane,
-    v.row,
-    g1 - 0.5,
-    v.col,
-    chU < chV ? "above" : "below",
-    chU,
-    g1 - 0.5
-  );
-  return {
-    edgeId: e.id,
-    fromSide: "top",
-    toSide: "top",
-    pattern: "channel-approach",
-    points: [
-      { x: nodeCX(e.from), y: portY(e.from, "top") },
-      { x: nodeCX(e.from), y: channelY(u.lane, u.row, tSrc) },
-      { x: gutterX(g1, "exit", rGutter), y: channelY(u.lane, u.row, tSrc) },
       { x: gutterX(g1, "exit", rGutter), y: channelY(v.lane, v.row, tDst) },
       { x: nodeCX(e.to), y: channelY(v.lane, v.row, tDst) },
       { x: nodeCX(e.to), y: portY(e.to, "top") }
@@ -3832,180 +3651,8 @@ function planRowThenColumn(ctx, e, u, v, gU, gV) {
     ]
   };
 }
-function noDownwardOut(ctx, v, vRowPos) {
-  for (const e2 of ctx.g.edges) {
-    if (e2.from !== v.node.id || e2.isReturn) continue;
-    if (e2.toPool) {
-      const lane = blackboxLane(ctx, e2.toPool);
-      const bandPos = lane === void 0 ? void 0 : ctx.globalRow.get(rowKey(lane, 0));
-      if (bandPos !== void 0 && bandPos > vRowPos) return false;
-      continue;
-    }
-    const t = ctx.nodeById.get(e2.to);
-    if (!t) continue;
-    const tPos = ctx.globalRow.get(rowKey(t.lane, ctx.p.row.get(t.id)));
-    if (tPos > vRowPos) return false;
-  }
-  return true;
-}
-function bottomOutFree(ctx, v, vRowPos) {
-  for (const e2 of ctx.g.edges) {
-    if (e2.from !== v.node.id || e2.isReturn) continue;
-    if (e2.toPool) {
-      const lane = blackboxLane(ctx, e2.toPool);
-      const bandPos = lane === void 0 ? void 0 : ctx.globalRow.get(rowKey(lane, 0));
-      if (bandPos !== void 0 && bandPos > vRowPos) return false;
-      continue;
-    }
-    const t = ctx.nodeById.get(e2.to);
-    if (!t) continue;
-    const tPos = ctx.globalRow.get(rowKey(t.lane, ctx.p.row.get(t.id)));
-    if (tPos <= vRowPos) continue;
-    if (e2.kind === "assoc" || e2.kind === "msg") {
-      if (v.node.kind === "task") continue;
-      return false;
-    }
-    if (e2.kind === "seq" && isGw(v.node) && !e2.onSpine) return false;
-  }
-  return true;
-}
-function planPoolMsg(ctx, e) {
-  if (e.toPool) {
-    const u = cellOf(ctx, e.from);
-    const lane2 = blackboxLane(ctx, e.toPool);
-    const bandPos2 = ctx.globalRow.get(rowKey(lane2, 0));
-    const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
-    const below = bandPos2 > gU;
-    if (below && bottomFree(u.node) && reserveColRun(ctx, u.col, gU, bandPos2, e)) {
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "top",
-        pattern: "drop",
-        points: [
-          { x: nodeCX(e.from), y: portY(e.from, "bottom") },
-          { x: nodeCX(e.from), y: { t: "laneEdge", lane: lane2, edge: "top" } }
-        ]
-      };
-    }
-    const g1 = u.col + 1;
-    const run2 = allocGutter(ctx, g1, "exit", gU, bandPos2);
-    const srcY = fallbackRightY(e, e.from);
-    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
-    return {
-      edgeId: e.id,
-      fromSide: "right",
-      toSide: below ? "top" : "bottom",
-      pattern: "channel-approach",
-      points: [
-        { x: portX(e.from, "right"), y: srcY },
-        { x: gutterX(g1, "exit", run2), y: srcY },
-        { x: gutterX(g1, "exit", run2), y: { t: "laneEdge", lane: lane2, edge: below ? "top" : "bottom" } }
-      ]
-    };
-  }
-  const v = cellOf(ctx, e.to);
-  const lane = blackboxLane(ctx, e.fromPool);
-  const bandPos = ctx.globalRow.get(rowKey(lane, 0));
-  const gV = ctx.globalRow.get(rowKey(v.lane, v.row));
-  const above = bandPos < gV;
-  if (!isEventKind(v.node.kind)) {
-    if (above && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
-      return {
-        edgeId: e.id,
-        fromSide: "bottom",
-        toSide: "top",
-        pattern: "drop",
-        points: [
-          { x: nodeCX(e.to), y: { t: "laneEdge", lane, edge: "bottom" } },
-          { x: nodeCX(e.to), y: portY(e.to, "top") }
-        ]
-      };
-    }
-    const chPos2 = ctx.globalChannel.get(rowKey(v.lane, v.row));
-    const gx2 = v.col + 1;
-    const run2 = allocGutter(ctx, gx2, "exit", bandPos, chPos2);
-    const tCh2 = allocChannel(ctx, v.lane, v.row, gx2 - 0.5, v.col, bandPos < chPos2 ? "above" : "below", bandPos, gx2 - 0.5);
-    return {
-      edgeId: e.id,
-      fromSide: above ? "bottom" : "top",
-      toSide: "top",
-      pattern: "channel-approach",
-      points: [
-        { x: gutterX(gx2, "exit", run2), y: { t: "laneEdge", lane, edge: above ? "bottom" : "top" } },
-        { x: gutterX(gx2, "exit", run2), y: channelY(v.lane, v.row, tCh2) },
-        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
-        { x: nodeCX(e.to), y: portY(e.to, "top") }
-      ]
-    };
-  }
-  const face = above ? "top" : "bottom";
-  const poolEdge = above ? "bottom" : "top";
-  const belowClear = !ctx.occupied.has(`${v.lane}:${v.row + 1}:${v.col}`);
-  const faceOpen = face === "top" || eventBottomOpen(ctx, v.node) && belowClear;
-  const enter = faceOpen ? face : "top";
-  if ((enter === "top" ? above : !above) && reserveColRun(ctx, v.col, bandPos, gV, e, `#pool:${lane}`)) {
-    return {
-      edgeId: e.id,
-      fromSide: poolEdge,
-      toSide: enter,
-      pattern: "drop",
-      points: [
-        { x: nodeCX(e.to), y: { t: "laneEdge", lane, edge: poolEdge } },
-        { x: nodeCX(e.to), y: portY(e.to, enter) }
-      ]
-    };
-  }
-  const gx = v.col + 1;
-  if (enter === "bottom") {
-    const belowRow = v.row + 1;
-    const belowCh = ctx.globalChannel.get(rowKey(v.lane, belowRow));
-    if (belowCh !== void 0) {
-      const run3 = allocGutter(ctx, gx, "exit", bandPos, belowCh);
-      const tCh2 = allocChannel(ctx, v.lane, belowRow, gx - 0.5, v.col, "below", bandPos, gx - 0.5);
-      return {
-        edgeId: e.id,
-        fromSide: poolEdge,
-        toSide: "bottom",
-        pattern: "channel-approach",
-        points: [
-          { x: gutterX(gx, "exit", run3), y: { t: "laneEdge", lane, edge: poolEdge } },
-          { x: gutterX(gx, "exit", run3), y: channelY(v.lane, belowRow, tCh2) },
-          { x: nodeCX(e.to), y: channelY(v.lane, belowRow, tCh2) },
-          { x: nodeCX(e.to), y: portY(e.to, "bottom") }
-        ]
-      };
-    }
-    const run2 = allocGutter(ctx, gx, "exit", bandPos, gV);
-    return {
-      edgeId: e.id,
-      fromSide: poolEdge,
-      toSide: "bottom",
-      pattern: "channel-approach",
-      points: [
-        { x: gutterX(gx, "exit", run2), y: { t: "laneEdge", lane, edge: poolEdge } },
-        { x: gutterX(gx, "exit", run2), y: portStubY(e.to, "bottom") },
-        { x: nodeCX(e.to), y: portStubY(e.to, "bottom") },
-        { x: nodeCX(e.to), y: portY(e.to, "bottom") }
-      ]
-    };
-  }
-  const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
-  const run = allocGutter(ctx, gx, "exit", bandPos, chPos);
-  const tCh = allocChannel(ctx, v.lane, v.row, gx - 0.5, v.col, bandPos < chPos ? "above" : "below", bandPos, gx - 0.5);
-  return {
-    edgeId: e.id,
-    fromSide: poolEdge,
-    toSide: "top",
-    pattern: "channel-approach",
-    points: [
-      { x: gutterX(gx, "exit", run), y: { t: "laneEdge", lane, edge: poolEdge } },
-      { x: gutterX(gx, "exit", run), y: channelY(v.lane, v.row, tCh) },
-      { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh) },
-      { x: nodeCX(e.to), y: portY(e.to, "top") }
-    ]
-  };
-}
+
+// src/route/patterns-return.ts
 function planReturn(ctx, e) {
   const u = cellOf(ctx, e.from);
   const v = cellOf(ctx, e.to);
@@ -4122,6 +3769,376 @@ function planReturn(ctx, e) {
       { x: nodeCX(e.to), y: channelY(v.lane, v.row, t) },
       { x: nodeCX(e.to), y: portY(e.to, "top") }
     ]
+  };
+}
+
+// src/route/tracks.ts
+function separateSharedEntries(ctx, plans, poolGapRunTrack) {
+  const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
+  const ladderRank = (plan, ownId, peerCol) => {
+    const pt = plan.points.find((q) => q.y.t === "poolChannel");
+    if (!pt || pt.y.t !== "poolChannel") return 0;
+    const t = poolGapRunTrack.get(pt.y.run) ?? 0;
+    const ownPool = ctx.pools.indexOfNode(ownId);
+    if (ownPool === void 0) return 0;
+    const isUpper = ownPool === pt.y.gap;
+    const dir = Math.sign(peerCol - (ctx.p.col.get(ownId) ?? 0));
+    const closeness = isUpper ? -t : t;
+    return dir * closeness;
+  };
+  const hasCorridorRun = (plan) => plan.points.some((q) => q.y.t === "poolChannel");
+  const groups = /* @__PURE__ */ new Map();
+  const add2 = (nodeId, side, axis, slot) => {
+    const key2 = `${nodeId}:${side}`;
+    const group2 = groups.get(key2) ?? { axis, nodeId, slots: [] };
+    group2.slots.push(slot);
+    groups.set(key2, group2);
+  };
+  for (const plan of plans) {
+    const e = edgeById.get(plan.edgeId);
+    if (!e) continue;
+    const toKind = ctx.nodeById.get(e.to)?.kind;
+    if (e.kind !== "seq") {
+      const boxLike = toKind === "task" || toKind === "doc" || toKind === "store" || toKind === "note";
+      if (boxLike && (plan.toSide === "top" || plan.toSide === "bottom")) {
+        const a = plan.points.at(-2)?.x, b = plan.points.at(-1)?.x;
+        if (a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.to && b.id === e.to) {
+          add2(e.to, plan.toSide, "x", { plan, end: "to" });
+        }
+      } else if ((toKind === "doc" || toKind === "store" || toKind === "note") && (plan.toSide === "left" || plan.toSide === "right")) {
+        const b = plan.points.at(-1)?.y;
+        if (plan.points.length >= 3 && b?.t === "portY" && b.id === e.to && b.side === plan.toSide) {
+          add2(e.to, plan.toSide, "y", { plan, end: "to" });
+        }
+      }
+      if (ctx.nodeById.get(e.from)?.kind === "task" && (plan.fromSide === "bottom" || plan.fromSide === "top")) {
+        const a = plan.points[0]?.x, b = plan.points[1]?.x;
+        if (a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.from && b.id === e.from) {
+          add2(e.from, plan.fromSide, "x", { plan, end: "from" });
+        }
+      }
+    }
+    if (toKind && (isGatewayKind(toKind) || isEventKind(toKind))) {
+      if (plan.toSide === "top" || plan.toSide === "bottom") {
+        const a = plan.points.at(-2)?.x, b = plan.points.at(-1)?.x;
+        const stub = a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.to && b.id === e.to;
+        const eventFace = isEventKind(toKind);
+        if (stub && (eventFace || e.kind === "seq" && plan.points.length >= 4)) {
+          add2(e.to, plan.toSide, "x", { plan, end: "to" });
+        }
+      } else if (e.kind === "seq" && plan.points.length >= 4 && (plan.toSide === "left" || plan.toSide === "right")) {
+        add2(e.to, plan.toSide, "y", { plan, end: "to" });
+      }
+    }
+  }
+  for (const { axis, nodeId, slots: group2 } of groups.values()) {
+    if (group2.length < 2) continue;
+    group2.sort((a, b) => {
+      const ea = edgeById.get(a.plan.edgeId), eb = edgeById.get(b.plan.edgeId);
+      const na = ctx.nodeById.get(a.end === "to" ? ea.from : ea.to);
+      const nb = ctx.nodeById.get(b.end === "to" ? eb.from : eb.to);
+      const ca = na ? axis === "x" ? ctx.p.col.get(na.id) : ctx.globalRow.get(rowKey(na.lane, ctx.p.row.get(na.id))) : ea.declIndex;
+      const cb = nb ? axis === "x" ? ctx.p.col.get(nb.id) : ctx.globalRow.get(rowKey(nb.lane, ctx.p.row.get(nb.id))) : eb.declIndex;
+      if (axis === "x" && na && nb && hasCorridorRun(a.plan) && hasCorridorRun(b.plan)) {
+        const ra = ladderRank(a.plan, nodeId, ca);
+        const rb = ladderRank(b.plan, nodeId, cb);
+        if (ra !== rb) return ra - rb;
+      }
+      if (ca !== cb) return ca - cb;
+      return ea.declIndex - eb.declIndex;
+    });
+    const kind = ctx.nodeById.get(nodeId)?.kind;
+    const gw = kind !== void 0 && isGatewayKind(kind);
+    const limit = gw ? 14 : axis === "x" ? 10 : 8;
+    const stepMax = gw ? 24 : 12;
+    const step = Math.min(stepMax, 2 * limit / (group2.length - 1));
+    group2.forEach(({ plan, end }, i) => {
+      const offset = (i - (group2.length - 1) / 2) * step;
+      if (axis === "x") {
+        const a = end === "to" ? plan.points.length - 2 : 0;
+        plan.points[a].x = nodeCX(nodeId, offset);
+        plan.points[a + 1].x = nodeCX(nodeId, offset);
+      } else if (end === "from") {
+        const base = plan.points[0]?.y.t === "nodeCY" ? plan.points[0].y.offset ?? 0 : 0;
+        plan.points[0].y = nodeCY(nodeId, base + offset);
+        if (plan.points[1]?.y.t === "nodeCY") plan.points[1].y = nodeCY(nodeId, base + offset);
+      } else {
+        plan.points.at(-2).y = nodeCY(nodeId, offset);
+        plan.points.at(-1).y = nodeCY(nodeId, offset);
+      }
+    });
+  }
+}
+function bundleSameOrigin(ctx, plans) {
+  const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
+  const groups = /* @__PURE__ */ new Map();
+  for (const plan of plans) {
+    const e = edgeById.get(plan.edgeId);
+    if (!e || e.kind !== "assoc") continue;
+    const src = ctx.nodeById.get(e.from);
+    if (!src || isGw(src)) continue;
+    const key2 = `${e.from}|${e.kind}|${plan.fromSide}`;
+    const list = groups.get(key2) ?? [];
+    list.push(plan);
+    groups.set(key2, list);
+  }
+  for (const raw of groups.values()) {
+    const group2 = raw.filter((plan) => plan.points.length >= 3);
+    if (group2.length < 2) continue;
+    if (group2[0]?.fromSide !== "right") continue;
+    if (!group2.every((plan) => ctx.nodeById.get(edgeById.get(plan.edgeId).to)?.kind === "store")) continue;
+    group2.sort((a, b) => a.edgeId.localeCompare(b.edgeId));
+    offsetOriginStubs(group2);
+    shareOriginTrunk(group2);
+  }
+}
+function offsetOriginStubs(group2) {
+  if (group2[0]?.fromSide !== "right") return;
+  const n = group2.length;
+  const step = Math.min(12, 16 / (n - 1));
+  group2.forEach((plan, i) => {
+    const offset = (i - (n - 1) / 2) * step;
+    const p0 = plan.points[0];
+    const p1 = plan.points[1];
+    if (!p0 || p0.y.t !== "nodeCY") return;
+    const base = p0.y.offset ?? 0;
+    const id = p0.y.id;
+    p0.y = nodeCY(id, base + offset);
+    if (p1?.y.t === "nodeCY" && p1.y.id === id) p1.y = nodeCY(id, base + offset);
+  });
+}
+function shareOriginTrunk(group2) {
+  const donor = group2.find((plan) => plan.points.some((pt) => pt.x.t === "gutter" || pt.y.t === "channel"));
+  if (!donor) return;
+  const donorGutterPoint = donor.points.find((pt) => pt.x.t === "gutter" && pt.x.side === "exit");
+  const donorGutter = donorGutterPoint?.x.t === "gutter" ? donorGutterPoint.x : void 0;
+  const donorTrunkY = donor.points.find((pt, i) => i >= 2 && (pt.y.t === "channel" || pt.y.t === "rowMid"))?.y;
+  if (!donorGutter && !donorTrunkY) return;
+  const sameY = (a, b) => a.t === b.t && JSON.stringify(a) === JSON.stringify(b);
+  for (const plan of group2) {
+    if (plan === donor) continue;
+    if (donorGutter) {
+      for (const pt of plan.points) {
+        if (pt.x.t === "gutter" && pt.x.side === "exit" && pt.x.g === donorGutter.g) pt.x = donorGutter;
+      }
+    }
+    if (!donorTrunkY) continue;
+    for (let i = 1; i + 1 < plan.points.length; i++) {
+      const a = plan.points[i];
+      const b = plan.points[i + 1];
+      if (!sameY(a.y, b.y)) continue;
+      if (a.y.t !== "channel" && a.y.t !== "rowMid") continue;
+      a.y = donorTrunkY;
+      b.y = donorTrunkY;
+      break;
+    }
+  }
+}
+function assignPoolGapTracks(ctx) {
+  const poolGapTracks = /* @__PURE__ */ new Map();
+  const poolGapRunTrack = /* @__PURE__ */ new Map();
+  for (const [gap, runs] of ctx.poolGapRuns) {
+    const placed = [];
+    const score2 = (r) => {
+      let n = 0;
+      for (const other of runs) {
+        if (other.runId === r.runId) continue;
+        if (r.upperX >= other.a && r.upperX <= other.b) n--;
+        if (r.lowerX >= other.a && r.lowerX <= other.b) n++;
+      }
+      return n;
+    };
+    const before = (p, r) => p.runId !== r.runId && (p.upperX >= r.a && p.upperX <= r.b || r.lowerX >= p.a && r.lowerX <= p.b);
+    const preds = /* @__PURE__ */ new Map();
+    for (const r of runs) {
+      preds.set(r.runId, runs.filter((p) => before(p, r) && !before(r, p)));
+    }
+    const remaining = runs.slice().sort((a, b) => score2(a) - score2(b) || a.runId - b.runId);
+    const done = /* @__PURE__ */ new Set();
+    const place2 = (r) => {
+      let t = Math.max(0, ...(preds.get(r.runId) ?? []).filter((p) => done.has(p.runId)).map((p) => poolGapRunTrack.get(p.runId) + 1));
+      while (placed.some((p) => p.t === t && p.run.a <= r.b && r.a <= p.run.b)) t++;
+      placed.push({ run: r, t });
+      poolGapRunTrack.set(r.runId, t);
+      done.add(r.runId);
+      poolGapTracks.set(gap, Math.max(poolGapTracks.get(gap) ?? 0, t + 1));
+    };
+    while (remaining.length > 0) {
+      const i = remaining.findIndex((r2) => (preds.get(r2.runId) ?? []).every((p) => done.has(p.runId)));
+      const r = remaining.splice(i >= 0 ? i : 0, 1)[0];
+      place2(r);
+    }
+  }
+  return { poolGapTracks, poolGapRunTrack };
+}
+function gutterRunEnds(ctx) {
+  const rowPosOf = (id) => {
+    const n = ctx.nodeById.get(id);
+    const host = n && isAttachedBoundary(n) && n.attachedTo ? ctx.nodeById.get(n.attachedTo) ?? n : n;
+    if (!host) return 0;
+    return ctx.globalRow.get(rowKey(host.lane, ctx.p.row.get(host.id) ?? 0)) ?? 0;
+  };
+  const rank = (y) => {
+    switch (y.t) {
+      case "rowMid":
+        return ctx.globalRow.get(rowKey(y.lane, y.row)) ?? 0;
+      case "nodeCY":
+        return rowPosOf(y.id) + (y.offset ?? 0) / 1e3;
+      case "portY": {
+        const n = ctx.nodeById.get(y.id);
+        const edge = n && isAttachedBoundary(n) ? n.boundarySide === "top" ? -0.1 : 0.1 : 0;
+        const face = y.side === "top" ? -0.05 : y.side === "bottom" ? 0.05 : 0;
+        return rowPosOf(y.id) + edge + face;
+      }
+      case "portStubY":
+        return rowPosOf(y.id) + (y.side === "top" ? -1 : 1) * (0.05 + y.offset / 1e3);
+      case "channel":
+        return ctx.globalChannel.get(rowKey(y.lane, y.row)) ?? 0;
+      case "poolChannel":
+        return ctx.globalPoolGap.get(y.gap) ?? 0;
+      case "laneEdge":
+        return (ctx.globalRow.get(rowKey(y.lane, 0)) ?? 0) + (y.edge === "top" ? -0.5 : 0.5);
+    }
+  };
+  const colOf = (id) => {
+    const n = ctx.nodeById.get(id);
+    const host = n && isAttachedBoundary(n) && n.attachedTo ? n.attachedTo : id;
+    return ctx.p.col.get(host) ?? 0;
+  };
+  const sideOf = (x, g, side) => {
+    if (x.t === "gutter") {
+      if (x.g !== g) return x.g < g ? "left" : "right";
+      if (x.side === side) return "same";
+      return x.side === "exit" ? "left" : "right";
+    }
+    return colOf(x.id) < g ? "left" : "right";
+  };
+  const out = /* @__PURE__ */ new Map();
+  for (const plan of ctx.planned.values()) {
+    const pts = plan.points;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const x0 = pts[i].x;
+      const x1 = pts[i + 1].x;
+      if (x0.t !== "gutter" || x1.t !== "gutter" || x0.run !== x1.run) continue;
+      const y0 = rank(pts[i].y);
+      const y1 = rank(pts[i + 1].y);
+      const ends = { lo: Math.min(y0, y1), hi: Math.max(y0, y1), left: [], right: [] };
+      const prev = pts[i - 1];
+      const next = pts[i + 2];
+      if (prev) {
+        const s = sideOf(prev.x, x0.g, x0.side);
+        if (s !== "same") ends[s].push(y0);
+      }
+      if (next) {
+        const s = sideOf(next.x, x0.g, x0.side);
+        if (s !== "same") ends[s].push(y1);
+      }
+      out.set(x0.run, ends);
+    }
+  }
+  return out;
+}
+function assignGutterTracks(ctx) {
+  const gutterTracks = /* @__PURE__ */ new Map();
+  const gutterRunTrack = /* @__PURE__ */ new Map();
+  const ends = gutterRunEnds(ctx);
+  const inside2 = (y, r) => y > r.lo && y < r.hi;
+  const crossLeftOf = (p, q) => {
+    const P = ends.get(p);
+    const Q = ends.get(q);
+    if (!P || !Q) return 0;
+    let n = 0;
+    for (const y of Q.left) if (inside2(y, P)) n++;
+    for (const y of P.right) if (inside2(y, Q)) n++;
+    return n;
+  };
+  for (const [key2, runs] of ctx.gutterRuns) {
+    const i = key2.lastIndexOf(":");
+    const gi = Number(key2.slice(0, i));
+    const side = key2.slice(i + 1);
+    const score2 = /* @__PURE__ */ new Map();
+    for (const r of runs) {
+      let s = 0;
+      for (const o of runs) {
+        if (o.runId === r.runId) continue;
+        s += crossLeftOf(r.runId, o.runId) - crossLeftOf(o.runId, r.runId);
+      }
+      score2.set(r.runId, s);
+    }
+    const sorted = runs.slice().sort((x, y) => score2.get(x.runId) - score2.get(y.runId) || x.b - x.a - (y.b - y.a) || x.runId - y.runId);
+    const placed = [];
+    let count = 0;
+    for (const r of sorted) {
+      let t = 0;
+      while (placed.some((p) => p.t === t && p.a <= r.b && r.a <= p.b)) t++;
+      placed.push({ a: r.a, b: r.b, t });
+      gutterRunTrack.set(r.runId, t);
+      count = Math.max(count, t + 1);
+    }
+    const cur = gutterTracks.get(gi) ?? { exit: 0, entry: 0 };
+    cur[side] = Math.max(cur[side], count);
+    gutterTracks.set(gi, cur);
+  }
+  return { gutterTracks, gutterRunTrack };
+}
+function assignChannelTracks(ctx) {
+  const channelTracks = /* @__PURE__ */ new Map();
+  const channelRunTrack = /* @__PURE__ */ new Map();
+  for (const [key2, runs] of ctx.channelRuns) {
+    const contains = (list) => (r) => list.filter((o) => o.runId !== r.runId && o.entryX > r.a && o.entryX < r.b).length;
+    const aboveList = runs.filter((r) => r.side === "above");
+    const belowList = runs.filter((r) => r.side === "below");
+    const cAbove = contains(aboveList);
+    const cBelow = contains(belowList);
+    const above = aboveList.sort((x, y) => cAbove(x) - cAbove(y) || x.depth - y.depth || x.runId - y.runId);
+    const below = belowList.sort((x, y) => cBelow(x) - cBelow(y) || y.depth - x.depth || x.runId - y.runId);
+    const firstFit = (list) => {
+      const placed = [];
+      const out = /* @__PURE__ */ new Map();
+      for (const r of list) {
+        let t = 0;
+        while (placed.some((p) => p.t === t && p.a <= r.b && r.a <= p.b)) t++;
+        placed.push({ a: r.a, b: r.b, t });
+        out.set(r.runId, t);
+      }
+      return out;
+    };
+    const aboveT = firstFit(above);
+    const belowT = firstFit(below);
+    const topCount = Math.max(0, ...[...aboveT.values()].map((t) => t + 1));
+    const bottomCount = Math.max(0, ...[...belowT.values()].map((t) => t + 1));
+    const total = topCount + bottomCount;
+    for (const [runId, t] of aboveT) channelRunTrack.set(runId, t);
+    for (const [runId, t] of belowT) channelRunTrack.set(runId, total - 1 - t);
+    channelTracks.set(key2, total);
+  }
+  return { channelTracks, channelRunTrack };
+}
+
+// src/route.ts
+function route(g, p, optimizeReadability = false, options) {
+  const ctx = buildContext(g, p, optimizeReadability, options);
+  const plans = [];
+  for (const e of g.edges.slice().sort((a, b) => a.declIndex - b.declIndex)) {
+    const plan = e.fromPool || e.toPool ? planPoolMsg(ctx, e) : e.isReturn ? planReturn(ctx, e) : planForward(ctx, e);
+    plans.push(plan);
+    ctx.planned.set(e.id, plan);
+  }
+  const { poolGapTracks, poolGapRunTrack } = assignPoolGapTracks(ctx);
+  separateSharedEntries(ctx, plans, poolGapRunTrack);
+  bundleSameOrigin(ctx, plans);
+  const { gutterTracks, gutterRunTrack } = assignGutterTracks(ctx);
+  const { channelTracks, channelRunTrack } = assignChannelTracks(ctx);
+  return {
+    plans,
+    gutterTracks,
+    channelTracks,
+    channelRunTrack,
+    gutterRunTrack,
+    poolGapTracks,
+    poolGapRunTrack,
+    gutterLabelNeed: ctx.gutterLabelNeed,
+    poolExteriorGutter: ctx.poolExteriorGutter
   };
 }
 
