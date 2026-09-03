@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L28
+# Layout Evolution, L1–L29
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -220,6 +220,12 @@ A review of the day's changes listed five behavioural gaps and seven inconsisten
 Four seeds of the 2,000-seed development fuzz had failed since v0.2.19 and were carried as known defects. Each had a distinct cause. Bundling same-origin store associations offset only the first point of a two-point same-row association, which turned it into a diagonal (O-1); two-point lines are now left out of the bundle. A black-box pool message entering an event's south vertex through the channel below did not check the cell directly below, so it overlapped the channel-to-north descent of the node there (O-6); the south entry now requires that cell to be empty, as S-56 already does for other vertex entries. And the W-252 safety net (a return edge placed forward in time) fired for a store that placement had deliberately returned to its writer's column; documents are state (S-73), so returns touching a document-like node are exempt.
 
 Outcome: 2,000 seeds × 2 orientations with zero violations for the first time; all corpus diagrams byte-identical.
+
+## L29 — Messages into boundary events (2026-09-03)
+
+An external review found that a message into a message boundary event was silently never aligned: the S-15 lower bound moved the boundary event right, the boundary pin moved it back onto its activity, the relaxation never converged, and the constraint was dropped, leaving a message that ran backwards in time with no diagnostic. The constraint now applies to the activity the event is attached to. Extending the fuzz generator to send cross-pool messages into boundary events then exposed that no routing pattern handled such a target at all: boundary events are overlaid on the activity's south edge in P4, so every left-entry pattern ended in a diagonal (O-1), and the vertex patterns collided with the activity's own south port because a single boundary event sat at the activity's centre. Boundary events now hang over the right half of the activity, a message into one arrives from below through a stub placed beyond the event's label, reached through the gutter right of the activity's column, and the sender's side stub is reserved like the S-57 stubs with a left-gutter alternative.
+
+Outcome: 2,000 seeds × 2 orientations with the extended generator and zero violations; all corpus diagrams byte-identical (none uses boundary events).
 
 ## Open items retained from the loops
 

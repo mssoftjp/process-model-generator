@@ -30,8 +30,10 @@ function genSource(rnd: () => number): string {
     'mid', 'mid(message)', 'mid(signal)', 'mid(message,throw)',
     'store', 'note', 'doc(input)', 'doc(collection)',
   ];
+  const laneOf: number[] = [];
   for (let i = 0; i < nodeCount; i++) {
     const l = Math.floor(rnd() * laneCount);
+    laneOf.push(l);
     const kind = kinds[Math.floor(rnd() * kinds.length)]!;
     const label = LABELS[Math.floor(rnd() * LABELS.length)]!;
     decl[l]!.push(kind === 'task' ? `  n${i}[${label}]` : `  ${kind} n${i}[${label}]`);
@@ -62,6 +64,18 @@ function genSource(rnd: () => number): string {
     if (a === b) continue;
     const arrow2 = rnd() < 0.12 ? '~>' : rnd() < 0.15 ? '-.->' : rnd() < 0.15 ? '-.-' : rnd() < 0.15 ? '..>' : rnd() < 0.12 ? '->/' : '->';
     out.push(`n${a} ${arrow2} n${b}${rnd() < 0.4 ? ': 条件ラベル' : ''}`);
+  }
+  // 境界イベントを受信先にする他プールからのメッセージ(Message Boundary Event)。
+  // 同一プール内は ~> が seq に読み替えられ、境界イベントへのシーケンスは BPMN 上不正なので作らない
+  const poolOfLane = (l: number) => (poolSplit >= 0 && l >= poolSplit ? 1 : 0);
+  for (let i = 0; i < nodeCount; i++) {
+    const line = decl.flat().find((d) => d.includes(` nb${i}[`));
+    if (!line || poolSplit < 0 || rnd() < 0.5) continue;
+    const hostLane = decl.findIndex((lines) => lines.includes(line));
+    const senders = laneOf.map((l, j) => [l, j] as const).filter(([l]) => poolOfLane(l) !== poolOfLane(hostLane));
+    if (senders.length === 0) continue;
+    const [, j] = senders[Math.floor(rnd() * senders.length)]!;
+    out.push(`n${j} ~> nb${i}`);
   }
   // 書類とデータ関連(生産者→doc、doc→読み手。稀に doc 同士や逆向きも混ぜる)
   const docCount = Math.floor(rnd() * 4);

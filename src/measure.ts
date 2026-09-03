@@ -26,6 +26,12 @@ export const OUT_LABEL_GAP = 6;
  * 既定は交差軸プラス側（横図=下 / 縦図=右）。テキストは回転しないため、
  * 「使用ポートの反対側」という規則は向きごとに別の実面へ写る。
  */
+/** 境界イベントが対象 Activity の下辺から下へ張り出す量(円の半径 + 外置きラベル)。P3 の下辺スタブもこれを使う。 */
+export function boundaryHang(n: NormNode): number {
+  const lines = n.label === '' ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
+  return EVENT_R + (lines.length ? lines.length * OUT_LABEL_LINE_H + OUT_LABEL_GAP : 4);
+}
+
 export function measureNodes(
   nodes: NormNode[],
   labelCrossMinus = new Set<string>(),
@@ -34,9 +40,7 @@ export function measureNodes(
   const hanging = new Map<string, number>();
   for (const n of nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo) continue;
-    const lines = n.label === '' ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
-    const hang = EVENT_R + (lines.length ? lines.length * OUT_LABEL_LINE_H + OUT_LABEL_GAP : 4);
-    hanging.set(n.attachedTo, Math.max(hanging.get(n.attachedTo) ?? 0, hang));
+    hanging.set(n.attachedTo, Math.max(hanging.get(n.attachedTo) ?? 0, boundaryHang(n)));
   }
   const cells = new Map<string, NodeCell>();
   for (const n of nodes) {

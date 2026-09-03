@@ -34,6 +34,7 @@ import type {
   EdgePlan, GutterSide, NormEdge, NormGraph, NormNode, Placement, PortSide, RoutePlan, SymX, SymY,
 } from './types.ts';
 import { EDGE_FONT_SIZE, measureText } from './metrics.ts';
+import { boundaryHang, EVENT_R } from './measure.ts';
 
 interface Ctx {
   g: NormGraph;
@@ -925,6 +926,13 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     }
   }
 
+  // 境界イベント宛のメッセージ: 境界イベントは P4 で対象 Activity の下辺へ重ねられ、
+  // セル基線から離れるので、左入り系の経路は終点で斜線になる。下辺スタブへ専用経路で入る。
+  if (e.kind === 'msg' && isAttachedBoundary(v.node)) {
+    const b = planIntoBoundary(ctx, e, u, v, gU, gV);
+    if (b) return b;
+  }
+
   if (e.kind === 'msg') {
     const poolPair = poolPairIndices(ctx, u, v);
     if (poolPair && Math.abs(poolPair[0] - poolPair[1]) > 1) {
@@ -1468,6 +1476,75 @@ function planAcrossPoolGapZ(
       { x: nodeCX(e.from), y: poolChannelY(gap, run) },
       { x: nodeCX(e.to), y: poolChannelY(gap, run) },
       { x: nodeCX(e.to), y: portY(e.to, toSide) },
+    ],
+  };
+}
+
+/**
+ * 境界イベント宛メッセージ(C-53)。境界イベントは対象 Activity の下辺に掛かる円なので、
+ * 下辺スタブ(円の 16px 下)から真上に入る。対象列の右溝を縦回廊に使い、隣接プールなら
+ * プール間回廊、同一プールなら対象行の上チャネルで水平移動する。非隣接プールは対象外。
+ */
+function planIntoBoundary(
+  ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number, gV: number,
+): EdgePlan | undefined {
+  if (isAttachedBoundary(u.node)) return undefined;
+  const gx = v.col + 1;
+  // スタブは円の下の外置きラベルを跨いだ先(張り出し量 + 8px)。ラベルを線が横切らない
+  const stubY = portStubY(e.to, 'bottom', boundaryHang(v.node) - EVENT_R + 8);
+  const tail = (dstX: SymX) => [
+    { x: dstX, y: stubY },
+    { x: nodeCX(e.to), y: stubY },
+    { x: nodeCX(e.to), y: portY(e.to, 'bottom') },
+  ];
+  // 送信側の側面スタブ: 右溝が同じ行の隣のスタブと衝突するなら左溝から出る(S-57 と同じ)
+  const pickSource = (yOffset: number): { side: PortSide; g: number } => {
+    const right = { side: 'right' as PortSide, g: u.col + 1 };
+    if (reserveStubRun(ctx, u.lane, u.row, yOffset, u.col, gutterScale(right.g), e)) return right;
+    const left = { side: 'left' as PortSide, g: u.col };
+    if (reserveStubRun(ctx, u.lane, u.row, yOffset, gutterScale(left.g), u.col, e)) return left;
+    return right;
+  };
+  const gap = adjacentPoolGap(ctx, u, v);
+  if (gap !== undefined) {
+    const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
+    const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
+    const down = poolIndex.get(lanePool.get(u.lane)!) === gap;
+    const gapPos = ctx.globalPoolGap.get(gap)!;
+    const srcYOffset = down ? 8 : -8;
+    const src = pickSource(srcYOffset);
+    const srcRun = allocGutter(ctx, src.g, 'exit', gU, gapPos);
+    const dstRun = allocGutter(ctx, gx, 'entry', gapPos, gV);
+    const run = allocPoolGap(ctx, gap, down ? gutterScale(src.g) : gutterScale(gx), down ? gutterScale(gx) : gutterScale(src.g));
+    return {
+      edgeId: e.id, fromSide: src.side, toSide: 'bottom', pattern: 'channel-approach',
+      points: [
+        { x: portX(e.from, src.side), y: nodeCY(e.from, srcYOffset) },
+        { x: gutterX(src.g, 'exit', srcRun), y: nodeCY(e.from, srcYOffset) },
+        { x: gutterX(src.g, 'exit', srcRun), y: poolChannelY(gap, run) },
+        { x: gutterX(gx, 'entry', dstRun), y: poolChannelY(gap, run) },
+        ...tail(gutterX(gx, 'entry', dstRun)),
+      ],
+    };
+  }
+  const pair = poolPairIndices(ctx, u, v);
+  if (pair && pair[0] !== pair[1]) return undefined; // 非隣接プールは既存経路に任せる
+  const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
+  const src = pickSource(fallbackOffset(e));
+  const srcY = nodeCY(e.from, fallbackOffset(e));
+  const r1 = allocGutter(ctx, src.g, 'exit', gU, chPos);
+  const tCh = allocChannel(
+    ctx, v.lane, v.row, gutterScale(src.g), gutterScale(gx), gU < chPos ? 'above' : 'below', gU, gutterScale(src.g),
+  );
+  const r2 = allocGutter(ctx, gx, 'entry', chPos, gV);
+  return {
+    edgeId: e.id, fromSide: src.side, toSide: 'bottom', pattern: 'channel-approach',
+    points: [
+      { x: portX(e.from, src.side), y: srcY },
+      { x: gutterX(src.g, 'exit', r1), y: srcY },
+      { x: gutterX(src.g, 'exit', r1), y: channelY(v.lane, v.row, tCh) },
+      { x: gutterX(gx, 'entry', r2), y: channelY(v.lane, v.row, tCh) },
+      ...tail(gutterX(gx, 'entry', r2)),
     ],
   };
 }

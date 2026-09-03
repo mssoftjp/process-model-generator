@@ -171,6 +171,12 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
   if (messages.length === 0) return;
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)!));
   const limit = g.nodes.length + g.edges.length + 2;
+  // 境界イベントは対象 Activity と同じ列に固定される。境界イベントへの制約はその Activity に
+  // 掛ける(境界イベント自身に掛けると固定処理と打ち消し合って収束せず、制約が捨てられる)。
+  const anchor = (id: string): string => {
+    const n = nodeById.get(id);
+    return n && isAttachedBoundary(n) && n.attachedTo ? n.attachedTo : id;
+  };
   // 積み重なった分岐の分離で与える列の下限(ノード id → 最小列)
   const floors = new Map<string, number>();
   const relax = (active: NormEdge[]): boolean => {
@@ -180,8 +186,9 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
         if ((col.get(id) ?? 0) < floor) { col.set(id, floor); changed = true; }
       }
       for (const e of active) {
-        const need = col.get(e.from) ?? 0;
-        if ((col.get(e.to) ?? 0) < need) { col.set(e.to, need); changed = true; }
+        const to = anchor(e.to);
+        const need = col.get(anchor(e.from)) ?? 0;
+        if ((col.get(to) ?? 0) < need) { col.set(to, need); changed = true; }
       }
       for (const e of fwd) {
         const need = (col.get(e.from) ?? 0) + 1;
@@ -206,7 +213,7 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
       for (const [id, c] of snapshot) col.set(id, c);
     }
   }
-  separateStackedCorridors(g, col, active, floors, relax);
+  separateStackedCorridors(g, col, active, floors, relax, anchor);
 }
 
 /**
@@ -218,7 +225,7 @@ function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<
  */
 function separateStackedCorridors(
   g: NormGraph, col: Map<string, number>, active: NormEdge[], floors: Map<string, number>,
-  relax: (active: NormEdge[]) => boolean,
+  relax: (active: NormEdge[]) => boolean, anchor: (id: string) => string,
 ): void {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
@@ -250,9 +257,10 @@ function separateStackedCorridors(
       // 本流の送信元は動かさない。両方本流(または両方非本流)なら後発を動かす
       const loser = spine(m.from) && !spine(first.from) ? first : m;
       const snapshot = new Map(col);
-      floors.set(loser.from, c + 1);
+      const mover = anchor(loser.from); // 境界イベント発なら対象 Activity を動かす
+      floors.set(mover, c + 1);
       if (!relax(active)) {
-        floors.delete(loser.from);
+        floors.delete(mover);
         for (const [id, v] of snapshot) col.set(id, v);
         continue;
       }

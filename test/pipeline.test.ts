@@ -1862,6 +1862,38 @@ high -> e`);
   });
 });
 
+describe('境界イベントへのメッセージ整列 (L29)', () => {
+  it('境界イベントへのメッセージは対象 Activity ごと送信元の列まで動かす', () => {
+    // 境界イベント自身に下限を掛けると列固定と打ち消し合い、制約が捨てられて逆走していた
+    const src = `pool P1[A]
+lane L1[L1]
+ start s1
+ task a1[準備]
+ task a2[調整]
+ task(send) send[通知]
+ s1 -> a1
+ a1 -> a2
+ a2 -> send
+pool P2[B]
+lane L2[L2]
+ start s2
+ task work[作業]
+ boundary(message) alert[中断] @work
+ task fix[対応]
+ s2 -> work
+ alert -> fix
+send ~> alert`;
+    const r = noOracleViolations(src);
+    const p = place(normalize(parse(src).ir, false));
+    expect(p.col.get('send')).toBe(3);
+    expect(p.col.get('work')).toBe(3);
+    expect(p.col.get('alert')).toBe(3);
+    const msg = r.geometry.edges.find((e) => e.kind === 'msg')!;
+    const from = r.geometry.nodes.find((n) => n.id === 'send')!;
+    expect(msg.points.at(-1)!.x).toBeGreaterThanOrEqual(from.x); // 時間を遡らない
+  });
+});
+
 describe('fuzz 残余の回帰 (L28)', () => {
   it('同一始点のストア関連を束ねるとき、同一行の 2 点直線は斜線にしない', () => {
     // seed 1707: 2 点の直線に始点だけのオフセットが掛かり O-1 になった

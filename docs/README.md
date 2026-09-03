@@ -15,7 +15,7 @@ These files explain why the implementation has its current shape. They are not u
 
 ## Validation history
 
-- [Layout evolution](history/layout-evolution.md): a condensed record of the `L1`–`L28` design loops and rejected approaches.
+- [Layout evolution](history/layout-evolution.md): a condensed record of the `L1`–`L29` design loops and rejected approaches.
 - [Reproduction corpus](validation/reproduction-corpus.md): provenance and evaluation rules for BPMN source reproductions.
 
 Historical results remain evidence about past decisions, not claims about the current release. Current behavior is established by source, tests, and generated artifacts.

@@ -288,7 +288,9 @@ function overlayBoundaryEvents(g: NormGraph, nodeGeom: Map<string, NodeGeom>): v
     ids.forEach((id, i) => {
       const ng = nodeGeom.get(id);
       if (!ng) return;
-      const cx = host.x + (host.w * (i + 1)) / (ids.length + 1);
+      // 対象の下辺の右半分に並べ、中心(下辺ポート。文書への落としや上辺入りの列中心)を空ける。
+      // 中心に置くと、境界イベント宛メッセージの下辺スタブが対象の縦線と同じ x で重なる。
+      const cx = host.x + host.w * (0.5 + (i + 1) / (2 * (ids.length + 1)));
       const cy = host.y + host.h;
       ng.cx = cx;
       ng.cy = cy;

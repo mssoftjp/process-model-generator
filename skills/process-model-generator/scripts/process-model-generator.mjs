@@ -1713,13 +1713,15 @@ var OUT_LABEL_FONT = 12;
 var OUT_LABEL_LINE_H = 16;
 var OUT_LABEL_MAX_W = 152;
 var OUT_LABEL_GAP = 6;
+function boundaryHang(n) {
+  const lines = n.label === "" ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
+  return EVENT_R + (lines.length ? lines.length * OUT_LABEL_LINE_H + OUT_LABEL_GAP : 4);
+}
 function measureNodes(nodes, labelCrossMinus = /* @__PURE__ */ new Set(), orientation = "horizontal") {
   const hanging = /* @__PURE__ */ new Map();
   for (const n of nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo) continue;
-    const lines = n.label === "" ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
-    const hang = EVENT_R + (lines.length ? lines.length * OUT_LABEL_LINE_H + OUT_LABEL_GAP : 4);
-    hanging.set(n.attachedTo, Math.max(hanging.get(n.attachedTo) ?? 0, hang));
+    hanging.set(n.attachedTo, Math.max(hanging.get(n.attachedTo) ?? 0, boundaryHang(n)));
   }
   const cells2 = /* @__PURE__ */ new Map();
   for (const n of nodes) {
@@ -1966,6 +1968,10 @@ function alignMessageTiming(g, col, docIds) {
   if (messages.length === 0) return;
   const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)));
   const limit = g.nodes.length + g.edges.length + 2;
+  const anchor = (id) => {
+    const n = nodeById.get(id);
+    return n && isAttachedBoundary(n) && n.attachedTo ? n.attachedTo : id;
+  };
   const floors = /* @__PURE__ */ new Map();
   const relax = (active2) => {
     for (let iter = 0; ; iter++) {
@@ -1977,9 +1983,10 @@ function alignMessageTiming(g, col, docIds) {
         }
       }
       for (const e of active2) {
-        const need = col.get(e.from) ?? 0;
-        if ((col.get(e.to) ?? 0) < need) {
-          col.set(e.to, need);
+        const to = anchor(e.to);
+        const need = col.get(anchor(e.from)) ?? 0;
+        if ((col.get(to) ?? 0) < need) {
+          col.set(to, need);
           changed = true;
         }
       }
@@ -2011,9 +2018,9 @@ function alignMessageTiming(g, col, docIds) {
       for (const [id, c] of snapshot) col.set(id, c);
     }
   }
-  separateStackedCorridors(g, col, active, floors, relax);
+  separateStackedCorridors(g, col, active, floors, relax, anchor);
 }
-function separateStackedCorridors(g, col, active, floors, relax) {
+function separateStackedCorridors(g, col, active, floors, relax, anchor) {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
   const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
@@ -2039,9 +2046,10 @@ function separateStackedCorridors(g, col, active, floors, relax) {
       tried.add(`${first.id}|${m.id}`);
       const loser = spine(m.from) && !spine(first.from) ? first : m;
       const snapshot = new Map(col);
-      floors.set(loser.from, c + 1);
+      const mover = anchor(loser.from);
+      floors.set(mover, c + 1);
       if (!relax(active)) {
-        floors.delete(loser.from);
+        floors.delete(mover);
         for (const [id, v] of snapshot) col.set(id, v);
         continue;
       }
@@ -2880,6 +2888,10 @@ function planForward(ctx, e) {
       if (l) return l;
     }
   }
+  if (e.kind === "msg" && isAttachedBoundary(v.node)) {
+    const b = planIntoBoundary(ctx, e, u, v, gU, gV);
+    if (b) return b;
+  }
   if (e.kind === "msg") {
     const poolPair = poolPairIndices(ctx, u, v);
     if (poolPair && Math.abs(poolPair[0] - poolPair[1]) > 1) {
@@ -3330,6 +3342,78 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
       { x: nodeCX(e.from), y: poolChannelY(gap, run) },
       { x: nodeCX(e.to), y: poolChannelY(gap, run) },
       { x: nodeCX(e.to), y: portY(e.to, toSide) }
+    ]
+  };
+}
+function planIntoBoundary(ctx, e, u, v, gU, gV) {
+  if (isAttachedBoundary(u.node)) return void 0;
+  const gx = v.col + 1;
+  const stubY = portStubY(e.to, "bottom", boundaryHang(v.node) - EVENT_R + 8);
+  const tail = (dstX) => [
+    { x: dstX, y: stubY },
+    { x: nodeCX(e.to), y: stubY },
+    { x: nodeCX(e.to), y: portY(e.to, "bottom") }
+  ];
+  const pickSource = (yOffset) => {
+    const right = { side: "right", g: u.col + 1 };
+    if (reserveStubRun(ctx, u.lane, u.row, yOffset, u.col, gutterScale(right.g), e)) return right;
+    const left = { side: "left", g: u.col };
+    if (reserveStubRun(ctx, u.lane, u.row, yOffset, gutterScale(left.g), u.col, e)) return left;
+    return right;
+  };
+  const gap = adjacentPoolGap(ctx, u, v);
+  if (gap !== void 0) {
+    const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
+    const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
+    const down = poolIndex.get(lanePool.get(u.lane)) === gap;
+    const gapPos = ctx.globalPoolGap.get(gap);
+    const srcYOffset = down ? 8 : -8;
+    const src2 = pickSource(srcYOffset);
+    const srcRun = allocGutter(ctx, src2.g, "exit", gU, gapPos);
+    const dstRun = allocGutter(ctx, gx, "entry", gapPos, gV);
+    const run = allocPoolGap(ctx, gap, down ? gutterScale(src2.g) : gutterScale(gx), down ? gutterScale(gx) : gutterScale(src2.g));
+    return {
+      edgeId: e.id,
+      fromSide: src2.side,
+      toSide: "bottom",
+      pattern: "channel-approach",
+      points: [
+        { x: portX(e.from, src2.side), y: nodeCY(e.from, srcYOffset) },
+        { x: gutterX(src2.g, "exit", srcRun), y: nodeCY(e.from, srcYOffset) },
+        { x: gutterX(src2.g, "exit", srcRun), y: poolChannelY(gap, run) },
+        { x: gutterX(gx, "entry", dstRun), y: poolChannelY(gap, run) },
+        ...tail(gutterX(gx, "entry", dstRun))
+      ]
+    };
+  }
+  const pair = poolPairIndices(ctx, u, v);
+  if (pair && pair[0] !== pair[1]) return void 0;
+  const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
+  const src = pickSource(fallbackOffset(e));
+  const srcY = nodeCY(e.from, fallbackOffset(e));
+  const r1 = allocGutter(ctx, src.g, "exit", gU, chPos);
+  const tCh = allocChannel(
+    ctx,
+    v.lane,
+    v.row,
+    gutterScale(src.g),
+    gutterScale(gx),
+    gU < chPos ? "above" : "below",
+    gU,
+    gutterScale(src.g)
+  );
+  const r2 = allocGutter(ctx, gx, "entry", chPos, gV);
+  return {
+    edgeId: e.id,
+    fromSide: src.side,
+    toSide: "bottom",
+    pattern: "channel-approach",
+    points: [
+      { x: portX(e.from, src.side), y: srcY },
+      { x: gutterX(src.g, "exit", r1), y: srcY },
+      { x: gutterX(src.g, "exit", r1), y: channelY(v.lane, v.row, tCh) },
+      { x: gutterX(gx, "entry", r2), y: channelY(v.lane, v.row, tCh) },
+      ...tail(gutterX(gx, "entry", r2))
     ]
   };
 }
@@ -4061,7 +4145,7 @@ function overlayBoundaryEvents(g, nodeGeom) {
     ids.forEach((id, i) => {
       const ng = nodeGeom.get(id);
       if (!ng) return;
-      const cx = host.x + host.w * (i + 1) / (ids.length + 1);
+      const cx = host.x + host.w * (0.5 + (i + 1) / (2 * (ids.length + 1)));
       const cy = host.y + host.h;
       ng.cx = cx;
       ng.cy = cy;
