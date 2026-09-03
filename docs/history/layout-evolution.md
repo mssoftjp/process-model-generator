@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L21
+# Layout Evolution, L1–L22
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -168,6 +168,18 @@ Rejected after measurement:
 - returning documents that have readers to their writer's column: fuzzing produced dozens of associations through node interiors because the row is not known when the column is decided.
 
 Outcome: bends 437 → 414, detours 31 → 28, hops 64 → 65 (one figure trades two bends for one hop), no other figure worse, and the 2,000-seed fuzz violation set again identical to v0.2.19.
+
+## L22 — Remove rule-only rejections (2026-09-03)
+
+A blocker audit classified the remaining excess by what occupied the cells a one-bend shape would need. Eleven edges were blocked by no cell at all, only by rules. Accepted:
+
+- a document directly below the task that reads it connects with a straight top-to-bottom line (S-55), guarded by the reading task's face and by the already-planned entry sides of the document's other writers;
+- data associations may enter a document-like node from another row through its vertex under S-44;
+- a gateway with exactly one incoming sequence flow from another row and no same-row predecessor keeps its west vertex for that entry (S-51), so a main path reaching a split gateway across lanes no longer hooks over its north vertex;
+- non-gateway sequence returns may exit north in the baseline too (S-33); the gateway case stays improved-only because of the keihi regression recorded in cycle 1; and
+- the half-position corridor extension of L20 was replaced by an explicit order test (S-57): two verticals reaching the corridor at one column from opposite sides are accepted when the S-37 nesting relation orders them consistently and refused for X-shaped pairs.
+
+Outcome: bends 414 → 382, hops 65 → 61, detours 28 → 18, no diagram worse on any metric, label metrics unchanged, fuzz violation set identical to v0.2.19. The remaining excess is placement-bound: documents and annotations layered into the column of a join or gateway (7 edges), process nodes standing in the target column (8), and stores referenced from distant writers (C-66).
 
 ## Open items retained from the loops
 

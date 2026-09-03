@@ -55,12 +55,19 @@ interface Ctx {
   // 相互保護が効かないため、明示レジストリで重なりを断つ。
   // 同一始点は幹線共有、同一終点は O-6 と同じ収束共有（タスク入口は後段で分離）。
   // exclusive: 2 点の一直線など、後段のスロット分離を受けない走行。面共有の対象外。
-  colRuns: Map<number, Array<{ a: number; b: number; from: string; to: string; exclusive?: boolean }>>;
+  // gap: プール間回廊で終わる縦走行の回廊区間(列スケール)と、上側/下側の端点 x。
+  //      反対側から同じ列に着く走行との重なりは、回廊トラックの入れ子順(assignPoolGapTracks)
+  //      が一貫して並べられるときだけ安全なので、その判定に使う。
+  colRuns: Map<number, Array<{
+    a: number; b: number; from: string; to: string; exclusive?: boolean;
+    gap?: { a: number; b: number; upperX: number; lowerX: number; upperSide: boolean };
+  }>>;
   // 行基線の水平走行(direct・drop・row/channel-approach の基線区間)。列スケール
   // (列 c = c、溝 g = g - 0.5)。S-36 の「ノードで終わる」相互保護を明示予約に置き換え、
   // 列中心で終わる水平(行先行 L)も同じ規則で安全に扱う。共有規則は colRuns と同じ。
   rowRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
   labelCrossMinus: ReadonlySet<string>; // ラベルを交差軸マイナス側へ逃がしたイベント(P1 と同じ集合)
+  planned: Map<string, EdgePlan>; // 宣言順で先に計画した辺(入口面の静的参照に使う)
   optimizeReadability: boolean;
   poolExteriorGutter?: number;
   gapDestFlip: ReadonlySet<string>;
@@ -106,14 +113,18 @@ export function route(
     colRuns: new Map(),
     rowRuns: new Map(),
     labelCrossMinus: crossMinusLabelEvents(g),
+    planned: new Map(),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? new Set(),
   };
 
   const plans: EdgePlan[] = [];
   for (const e of g.edges.slice().sort((a, b) => a.declIndex - b.declIndex)) {
-    if (e.fromPool || e.toPool) plans.push(planPoolMsg(ctx, e));
-    else plans.push(e.isReturn ? planReturn(ctx, e) : planForward(ctx, e));
+    const plan = e.fromPool || e.toPool
+      ? planPoolMsg(ctx, e)
+      : e.isReturn ? planReturn(ctx, e) : planForward(ctx, e);
+    plans.push(plan);
+    ctx.planned.set(e.id, plan);
   }
   separateSharedEntries(ctx, plans);
   bundleSameOrigin(ctx, plans);
@@ -614,6 +625,36 @@ function topFree(ctx: Ctx, u: Cell): boolean {
   return true;
 }
 
+/**
+ * 列 col の回廊帯に反対側から着く既存走行と、入れ子順(assignPoolGapTracks の before 関係)が
+ * 矛盾なく並ぶか。上側から着く走行 P と下側から着く走行 Q が同じ x を端点に持つとき、
+ * P は必ず Q の上に置かれる(P.upperX が Q の区間内)。逆向きの関係も成立すると順序が循環し、
+ * 帯の中で縦線が重なり得る(fuzz seed 72 の X 字対)。
+ */
+function gapOrderConsistent(
+  ctx: Ctx, col: number, mine: { a: number; b: number; upperX: number; lowerX: number; upperSide: boolean },
+): boolean {
+  for (const r of ctx.colRuns.get(col) ?? []) {
+    if (!r.gap || r.gap.upperSide === mine.upperSide) continue;
+    const P = mine.upperSide ? mine : r.gap;
+    const Q = mine.upperSide ? r.gap : mine;
+    const reverse = (Q.upperX >= P.a && Q.upperX <= P.b) || (P.lowerX >= Q.a && P.lowerX <= Q.b);
+    if (reverse) return false;
+  }
+  return true;
+}
+
+/** ゲートウェイ v の西頂点が空いているか: 同一行からの seq 入りが無く、行違いの seq 入りが e だけ。 */
+function westFree(ctx: Ctx, v: Cell, e: NormEdge): boolean {
+  let crossRow = 0;
+  for (const o of ctx.g.edges) {
+    if (o.to !== v.node.id || o.kind !== 'seq' || o.isReturn || o.fromPool) continue;
+    if (sameRowSource(ctx, o, v)) return false;
+    crossRow++;
+  }
+  return crossRow === 1 && ctx.g.edges.some((o) => o.id === e.id && o.kind === 'seq');
+}
+
 /** ノードの上下面を使い得る他の辺(非 seq の出入り・戻り・プール発)が無いか。 */
 function faceQuiet(ctx: Ctx, nodeId: string, e: NormEdge): boolean {
   return !ctx.g.edges.some((o) =>
@@ -664,6 +705,32 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
         points: [
           { x: nodeCX(e.from), y: portY(e.from, 'bottom') },
           { x: nodeCX(e.to), y: portY(e.to, 'top') },
+        ],
+      };
+    }
+    // 直下の文書を上の工程が読む: top → bottom の一直線(帳票フローの型の鏡像)。
+    // 2 点形はスロット分離を受けないので、工程の下面に他の非 seq の出入りが無いときだけ。
+    if (
+      u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) &&
+      faceQuiet(ctx, v.node.id, e) && bottomOutFree(ctx, v, gV) &&
+      (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) &&
+      // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
+      // 未計画なら同一行の書き手(左入り)だけを許す
+      !ctx.g.edges.some((o) => {
+        if (o.id === e.id || o.kind !== 'assoc' || o.to !== u.node.id) return false;
+        const done = ctx.planned.get(o.id);
+        if (done) return done.toSide === 'top';
+        const w = ctx.nodeById.get(o.from);
+        return !w || w.lane !== u.lane || ctx.p.row.get(w.id) !== u.row;
+      }) &&
+      reserveColRun(ctx, u.col, gV, gU, e)
+    ) {
+      markExclusiveColRun(ctx, u.col);
+      return {
+        edgeId: e.id, fromSide: 'top', toSide: 'bottom', pattern: 'drop',
+        points: [
+          { x: nodeCX(e.from), y: portY(e.from, 'top') },
+          { x: nodeCX(e.to), y: portY(e.to, 'bottom') },
         ],
       };
     }
@@ -734,6 +801,11 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
           { x: portX(e.to, 'right'), y: portY(e.to, 'right') },
         ],
       };
+    }
+    // 行違いの文書類へは、専用形が無ければ行先行 L で上/下辺から入る(S-55 の西入りは同一行の形)。
+    if (!sameRow) {
+      const l = planRowThenColumn(ctx, e, u, v, gU, gV);
+      if (l) return l;
     }
   }
 
@@ -970,7 +1042,11 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   // 行違いでゲートウェイに入る辺は頂点入り(channel-approach 系)に限定する。
   // 交差軸プラス側からイベントへ着くシーケンスも同じ。上へ回ると図形の裏側へ出る。
   if (!sameRow && isGw(v.node)) {
-    return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
+    const l = planRowThenColumn(ctx, e, u, v, gU, gV);
+    if (l) return l;
+    // 同一行の前任者が無く、行違いの入りがこの 1 本だけなら西頂点は空いている:
+    // 通常の左入り(row-approach / channel-approach)に任せ、上頂点へ回り込まない。
+    if (!westFree(ctx, v, e)) return planIntoTop(ctx, e, u, v, gU);
   }
   if (!sameRow && isEventKind(v.node.kind) && gU > gV && eventBottomOpen(ctx, v.node)) {
     return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
@@ -1179,10 +1255,6 @@ function planAcrossPoolGapZ(
     if (v.node.kind !== 'task' && eventHasBottomOut(ctx, v.node.id) && !isEventKind(v.node.kind)) return undefined;
     if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return undefined;
   }
-  // 回廊は帯であり離散位置 gapPos では厚みが見えない。反対側の縦線と帯の中で重なるのを
-  // 防ぐため、予約区間を回廊の向こう側まで 0.5 伸ばす(チャネル終端の隣接セル条件と同型)。
-  const senderEnd = down ? gapPos + 0.5 : gapPos - 0.5;
-  const receiverStart = down ? gapPos - 0.5 : gapPos + 0.5;
   // 同列の一直線(2 点)はスロット分離の対象にならないので、面共有なしで列を占有できるときだけ。
   // さらに、チャネルから頂点へ降りる終端(planIntoTop 系)は列予約を持たないため、
   // 両端の面に他の非 seq の出入りが一切ないことを静的に要求する。
@@ -1190,12 +1262,24 @@ function planAcrossPoolGapZ(
   if (straight && !(faceQuiet(ctx, u.node.id, e) && faceQuiet(ctx, v.node.id, e))) return undefined;
   const shareU = !straight && slotted(u.node) ? u.node.id : undefined;
   const shareV = !straight && slotted(v.node) ? v.node.id : undefined;
-  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to, shareU)) return undefined;
-  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to, shareV)) return undefined;
-  reserveColRun(ctx, u.col, gU, senderEnd, e, e.from, shareU);
+  // 回廊は帯であり離散位置 gapPos では厚みが見えない。反対側から同じ列に着く走行とは、
+  // 回廊トラックの入れ子順が両者を矛盾なく並べられるときだけ帯の中で離れる。
+  const gapRun = {
+    a: Math.min(u.col, v.col), b: Math.max(u.col, v.col),
+    upperX: down ? u.col : v.col, lowerX: down ? v.col : u.col,
+  };
+  if (!straight) {
+    if (!gapOrderConsistent(ctx, u.col, { ...gapRun, upperSide: down })) return undefined;
+    if (!gapOrderConsistent(ctx, v.col, { ...gapRun, upperSide: !down })) return undefined;
+  }
+  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return undefined;
+  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV)) return undefined;
+  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
   if (straight) markExclusiveColRun(ctx, u.col);
-  reserveColRun(ctx, v.col, receiverStart, gV, e, e.from, shareV);
+  else ctx.colRuns.get(u.col)!.at(-1)!.gap = { ...gapRun, upperSide: down };
+  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV);
   if (straight) markExclusiveColRun(ctx, v.col);
+  else ctx.colRuns.get(v.col)!.at(-1)!.gap = { ...gapRun, upperSide: !down };
   if (straight) {
     return {
       edgeId: e.id, fromSide, toSide, pattern: 'drop',
@@ -1409,7 +1493,7 @@ function planRowThenColumn(
   // ゲートウェイ発は本流(東出し。S-50)だけ。非本流は上下頂点の文法に従う
   if (isGw(u.node) && !e.onSpine) return undefined;
   if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return undefined;
-  if (isDocLike(v.node.kind)) return undefined;
+  if (isDocLike(v.node.kind) && e.kind !== 'assoc') return undefined;
   if (nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col)) return undefined;
   const fromBelow = gU > gV;
   const side: PortSide = fromBelow ? 'bottom' : 'top';
@@ -1417,7 +1501,8 @@ function planRowThenColumn(
     if (!bottomOutFree(ctx, v, gV) || needsBottomMessagePort(ctx, v.node.id)) return undefined;
     if (!(bottomFree(v.node) || eventBottomOpen(ctx, v.node))) return undefined;
     // 非タスクの下スタブ(planFromBottomViaGutter)は予約を持たないため、非 seq 出があれば避ける
-    if (v.node.kind !== 'task' && eventHasBottomOut(ctx, v.node.id)) return undefined;
+    // (文書類の読み出しは右辺から出るので対象外)
+    if (v.node.kind !== 'task' && !isDocLike(v.node.kind) && eventHasBottomOut(ctx, v.node.id)) return undefined;
   } else if (isEventKind(v.node.kind) && e.kind === 'seq') {
     return undefined; // イベントの上辺入りは現行文法に無い(ラベル面の可能性)
   }
@@ -1673,9 +1758,10 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
   // 右溝の昇りを省いて north から直接出る(2 折れ)。基準系には入れない(cycle1 で
   // 基準系に入れると keihi の申請者レーンで上チャネル全幅逆走が勝つことが確認済み)。
   // 非 seq の戻り(書き戻しの関連など)は S-57 の +10 帯で右溝へ出す C2 規則を保つ。
+  // 基準系ではゲートウェイ発を除く(cycle1: 基準系の south 出口が top 出しに化けて keihi を割った)。
   if (
-    ctx.optimizeReadability && e.kind === 'seq' && chV < gU && !isAttachedBoundary(u.node) &&
-    topFree(ctx, u) &&
+    (ctx.optimizeReadability || !isGw(u.node)) && e.kind === 'seq' && chV < gU &&
+    !isAttachedBoundary(u.node) && topFree(ctx, u) &&
     !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
     !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) &&
     reserveColRun(ctx, u.col, chV, gU, e)

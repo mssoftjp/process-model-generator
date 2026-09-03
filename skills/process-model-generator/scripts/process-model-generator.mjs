@@ -2033,13 +2033,15 @@ function route(g, p, optimizeReadability = false, options) {
     colRuns: /* @__PURE__ */ new Map(),
     rowRuns: /* @__PURE__ */ new Map(),
     labelCrossMinus: crossMinusLabelEvents(g),
+    planned: /* @__PURE__ */ new Map(),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? /* @__PURE__ */ new Set()
   };
   const plans = [];
   for (const e of g.edges.slice().sort((a, b) => a.declIndex - b.declIndex)) {
-    if (e.fromPool || e.toPool) plans.push(planPoolMsg(ctx, e));
-    else plans.push(e.isReturn ? planReturn(ctx, e) : planForward(ctx, e));
+    const plan = e.fromPool || e.toPool ? planPoolMsg(ctx, e) : e.isReturn ? planReturn(ctx, e) : planForward(ctx, e);
+    plans.push(plan);
+    ctx.planned.set(e.id, plan);
   }
   separateSharedEntries(ctx, plans);
   bundleSameOrigin(ctx, plans);
@@ -2413,6 +2415,25 @@ function topFree(ctx, u) {
   }
   return true;
 }
+function gapOrderConsistent(ctx, col, mine) {
+  for (const r of ctx.colRuns.get(col) ?? []) {
+    if (!r.gap || r.gap.upperSide === mine.upperSide) continue;
+    const P = mine.upperSide ? mine : r.gap;
+    const Q = mine.upperSide ? r.gap : mine;
+    const reverse = Q.upperX >= P.a && Q.upperX <= P.b || P.lowerX >= Q.a && P.lowerX <= Q.b;
+    if (reverse) return false;
+  }
+  return true;
+}
+function westFree(ctx, v, e) {
+  let crossRow = 0;
+  for (const o of ctx.g.edges) {
+    if (o.to !== v.node.id || o.kind !== "seq" || o.isReturn || o.fromPool) continue;
+    if (sameRowSource(ctx, o, v)) return false;
+    crossRow++;
+  }
+  return crossRow === 1 && ctx.g.edges.some((o) => o.id === e.id && o.kind === "seq");
+}
 function faceQuiet(ctx, nodeId, e) {
   return !ctx.g.edges.some((o) => o.id !== e.id && (o.to === nodeId && (o.kind !== "seq" || o.isReturn || !!o.fromPool) || o.from === nodeId && o.kind !== "seq"));
 }
@@ -2451,6 +2472,27 @@ function planForward(ctx, e) {
         points: [
           { x: nodeCX(e.from), y: portY(e.from, "bottom") },
           { x: nodeCX(e.to), y: portY(e.to, "top") }
+        ]
+      };
+    }
+    if (u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) && faceQuiet(ctx, v.node.id, e) && bottomOutFree(ctx, v, gV) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
+    // 未計画なら同一行の書き手(左入り)だけを許す
+    !ctx.g.edges.some((o) => {
+      if (o.id === e.id || o.kind !== "assoc" || o.to !== u.node.id) return false;
+      const done = ctx.planned.get(o.id);
+      if (done) return done.toSide === "top";
+      const w = ctx.nodeById.get(o.from);
+      return !w || w.lane !== u.lane || ctx.p.row.get(w.id) !== u.row;
+    }) && reserveColRun(ctx, u.col, gV, gU, e)) {
+      markExclusiveColRun(ctx, u.col);
+      return {
+        edgeId: e.id,
+        fromSide: "top",
+        toSide: "bottom",
+        pattern: "drop",
+        points: [
+          { x: nodeCX(e.from), y: portY(e.from, "top") },
+          { x: nodeCX(e.to), y: portY(e.to, "bottom") }
         ]
       };
     }
@@ -2510,6 +2552,10 @@ function planForward(ctx, e) {
           { x: portX(e.to, "right"), y: portY(e.to, "right") }
         ]
       };
+    }
+    if (!sameRow) {
+      const l = planRowThenColumn(ctx, e, u, v, gU, gV);
+      if (l) return l;
     }
   }
   if (e.kind === "msg") {
@@ -2710,7 +2756,9 @@ function planForward(ctx, e) {
     return planFromBottomViaGutter(ctx, e, u, v, gU, chV);
   }
   if (!sameRow && isGw(v.node)) {
-    return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
+    const l = planRowThenColumn(ctx, e, u, v, gU, gV);
+    if (l) return l;
+    if (!westFree(ctx, v, e)) return planIntoTop(ctx, e, u, v, gU);
   }
   if (!sameRow && isEventKind(v.node.kind) && gU > gV && eventBottomOpen(ctx, v.node)) {
     return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
@@ -2878,18 +2926,28 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
     if (v.node.kind !== "task" && eventHasBottomOut(ctx, v.node.id) && !isEventKind(v.node.kind)) return void 0;
     if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return void 0;
   }
-  const senderEnd = down ? gapPos + 0.5 : gapPos - 0.5;
-  const receiverStart = down ? gapPos - 0.5 : gapPos + 0.5;
   const straight = u.col === v.col;
   if (straight && !(faceQuiet(ctx, u.node.id, e) && faceQuiet(ctx, v.node.id, e))) return void 0;
   const shareU = !straight && slotted(u.node) ? u.node.id : void 0;
   const shareV = !straight && slotted(v.node) ? v.node.id : void 0;
-  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to, shareU)) return void 0;
-  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to, shareV)) return void 0;
-  reserveColRun(ctx, u.col, gU, senderEnd, e, e.from, shareU);
+  const gapRun = {
+    a: Math.min(u.col, v.col),
+    b: Math.max(u.col, v.col),
+    upperX: down ? u.col : v.col,
+    lowerX: down ? v.col : u.col
+  };
+  if (!straight) {
+    if (!gapOrderConsistent(ctx, u.col, { ...gapRun, upperSide: down })) return void 0;
+    if (!gapOrderConsistent(ctx, v.col, { ...gapRun, upperSide: !down })) return void 0;
+  }
+  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return void 0;
+  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV)) return void 0;
+  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
   if (straight) markExclusiveColRun(ctx, u.col);
-  reserveColRun(ctx, v.col, receiverStart, gV, e, e.from, shareV);
+  else ctx.colRuns.get(u.col).at(-1).gap = { ...gapRun, upperSide: down };
+  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV);
   if (straight) markExclusiveColRun(ctx, v.col);
+  else ctx.colRuns.get(v.col).at(-1).gap = { ...gapRun, upperSide: !down };
   if (straight) {
     return {
       edgeId: e.id,
@@ -3082,14 +3140,14 @@ function planRowThenColumn(ctx, e, u, v, gU, gV) {
   if (gU === gV || v.col <= u.col) return void 0;
   if (isGw(u.node) && !e.onSpine) return void 0;
   if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return void 0;
-  if (isDocLike(v.node.kind)) return void 0;
+  if (isDocLike(v.node.kind) && e.kind !== "assoc") return void 0;
   if (nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col)) return void 0;
   const fromBelow = gU > gV;
   const side = fromBelow ? "bottom" : "top";
   if (fromBelow) {
     if (!bottomOutFree(ctx, v, gV) || needsBottomMessagePort(ctx, v.node.id)) return void 0;
     if (!(bottomFree(v.node) || eventBottomOpen(ctx, v.node))) return void 0;
-    if (v.node.kind !== "task" && eventHasBottomOut(ctx, v.node.id)) return void 0;
+    if (v.node.kind !== "task" && !isDocLike(v.node.kind) && eventHasBottomOut(ctx, v.node.id)) return void 0;
   } else if (isEventKind(v.node.kind) && e.kind === "seq") {
     return void 0;
   }
@@ -3364,7 +3422,7 @@ function planReturn(ctx, e) {
       ]
     };
   }
-  if (ctx.optimizeReadability && e.kind === "seq" && chV < gU && !isAttachedBoundary(u.node) && topFree(ctx, u) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
+  if ((ctx.optimizeReadability || !isGw(u.node)) && e.kind === "seq" && chV < gU && !isAttachedBoundary(u.node) && topFree(ctx, u) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
     const t2 = allocChannel(ctx, v.lane, v.row, v.col, u.col, "below", gU, u.col);
     return {
       edgeId: e.id,
