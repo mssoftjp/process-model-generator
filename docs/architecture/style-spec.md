@@ -1,4 +1,4 @@
-# Style Specification v1.3 — Process Diagram Grammar
+# Style Specification v1.4 — Process Diagram Grammar
 
 This document defines testable rules for readable process diagrams instead of making an ambiguous promise that diagrams will merely “look readable.” Each rule is expressed as a predicate over discrete diagram features. Changes to these rules require a version increment and review as a snapshot difference.
 
@@ -20,8 +20,8 @@ The specification and engine implementation must remain aligned. If either contr
 - **S-21** Add start or end events only when none of that kind exists.
 - **S-22** A return edge is an edge that creates a cycle, identified as a DFS back edge. An explicit `->>` fixes that edge as the return; remaining cycles use the same DFS rule. Direction and connectivity do not change. Merges are drawn forward.
 - **S-23** Every normalization rewrite is reported with an `N-` diagnostic.
-- **S-25** A document or data store whose references are far apart is drawn as several reference glyphs (C-66), the way BPMN draws one data object or data store through several references. References are ordered by the provisional layering column of their partner and cut into clusters where the column gap exceeds 5 or the lane distance exceeds 2; a document is repeated only when this yields two or more clusters. The first cluster keeps the original id, later clusters become `id__k`, and every glyph is placed in the lane of its cluster's writer (or first reader). Documents that take part in sequence or message flows, pool references, or document-to-document associations are never repeated. The rewrite is reported as N-260 and leaves the IR with one document.
 - **S-24** A meaning-preserving synthetic junction (`x_j`) is rendered as an explicit join (C-72). Removing it and attaching multiple incoming edges to one shared line creates a misleading T-junction that appears to join another path midway. A gateway with both multiple inputs and outputs is split into a join and a split (N-211). The merge side of an event-based gateway normally becomes an XOR merge. Every incoming and outgoing edge uses a distinct port.
+- **S-25** A document or data store whose references are far apart is drawn as several reference glyphs (C-66), the way BPMN draws one data object or data store through several references. References are ordered by the provisional layering column of their partner and cut into clusters where the column gap exceeds 5 or the lane distance exceeds 2; a document is repeated only when this yields two or more clusters. The first cluster keeps the original id, later clusters become `id__k`, and every glyph is placed in the lane of its cluster's writer (or first reader). Documents that take part in sequence or message flows, pool references, or document-to-document associations are never repeated. The rewrite is reported as N-260 and leaves the IR with one document.
 
 ## S-3x Corridor grammar (P3; implementation of the C-40 three-layer model)
 

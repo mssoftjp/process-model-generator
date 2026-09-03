@@ -1476,7 +1476,28 @@ function provisionalColumns(nodes, edges) {
       }
     }
   }
-  return col;
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const messages = trial.filter((e) => e.kind === "msg" && !e.fromPool && !e.toPool && nodeIds.has(e.from) && nodeIds.has(e.to));
+  if (messages.length === 0) return col;
+  const before = new Map(col);
+  const limit = nodes.length + edges.length + 2;
+  for (let iter = 0; ; iter++) {
+    let changed = false;
+    for (const e of messages) {
+      if ((col.get(e.to) ?? 0) < (col.get(e.from) ?? 0)) {
+        col.set(e.to, col.get(e.from));
+        changed = true;
+      }
+    }
+    for (const e of fwd) {
+      if ((col.get(e.to) ?? 0) < (col.get(e.from) ?? 0) + 1) {
+        col.set(e.to, (col.get(e.from) ?? 0) + 1);
+        changed = true;
+      }
+    }
+    if (!changed) return col;
+    if (iter > limit) return before;
+  }
 }
 function nodesReachingEnd(nodes, edges) {
   const incoming = /* @__PURE__ */ new Map();
@@ -1862,10 +1883,10 @@ function place(g) {
   const col = layerColumns(g, docIds);
   pinBoundaryColumns(g, col, docIds);
   alignMessageTiming(g, col, docIds);
-  keepDocsOffMessageCorridors(g, col, docIds);
   pullReadableDocColumns(g, col, docIds);
   keepDocsOffForeignSpine(g, col, docIds);
   snapStoresToLaneWriter(g, col);
+  keepDocsOffMessageCorridors(g, col, docIds);
   pullStartsToSuccessor(g, col);
   const { row, laneRows, reserved } = assignRows(g, col, docIds);
   const maxCol = Math.max(0, ...[...col.values()]);
@@ -2000,7 +2021,8 @@ function separateStackedCorridors(g, col, active, floors, relax) {
   const spine = (id) => nodeById.get(id)?.onSpine === true;
   const sameNodes = (a, b) => a.from === b.from && a.to === b.to || a.from === b.to && a.to === b.from;
   const tried = /* @__PURE__ */ new Set();
-  for (let round = 0; round < active.length; round++) {
+  const maxRounds = active.length * active.length + 1;
+  for (let round = 0; round < maxRounds; round++) {
     let bumped = false;
     const seen = /* @__PURE__ */ new Map();
     for (const m of active) {
@@ -2068,7 +2090,10 @@ function pullStartsToSuccessor(g, col) {
     if (n.kind !== "start") continue;
     const succ = g.edges.filter((e) => e.kind === "seq" && e.from === n.id).map((e) => col.get(e.to) ?? 0);
     if (succ.length === 0) continue;
-    const target = Math.min(...succ) - 1;
+    let target = Math.min(...succ) - 1;
+    for (const e of g.edges) {
+      if (e.kind === "msg" && e.from === n.id && !e.toPool && col.has(e.to)) target = Math.min(target, col.get(e.to));
+    }
     if (target > (col.get(n.id) ?? 0)) col.set(n.id, target);
   }
 }
@@ -2181,7 +2206,8 @@ function assignRows(g, col, docIds) {
     if (writers.length === 0) return "";
     return writers.sort((a, b) => col.get(b) - col.get(a) || a.localeCompare(b))[0];
   };
-  const readOnlyDoc = (ch) => ch.nodes.every((m) => isDocLike(m.kind)) && !g.edges.some((e) => ch.nodes.some((m) => m.id === e.to));
+  const laneHasProcess = new Set(g.nodes.filter((n) => !isDocLike(n.kind)).map((n) => n.lane));
+  const readOnlyDoc = (ch) => ch.nodes.every((m) => isDocLike(m.kind)) && laneHasProcess.has(ch.lane) && !g.edges.some((e) => ch.nodes.some((m) => m.id === e.to));
   const packed = /* @__PURE__ */ new Set();
   const placeChain = (ch) => {
     const res = reserved.get(ch.lane);
@@ -2301,6 +2327,7 @@ function separateSharedEntries(ctx, plans, poolGapRunTrack) {
     const closeness = isUpper ? -t : t;
     return dir * closeness;
   };
+  const hasCorridorRun = (plan) => plan.points.some((q) => q.y.t === "poolChannel");
   const groups = /* @__PURE__ */ new Map();
   const add2 = (nodeId, side, axis, slot) => {
     const key2 = `${nodeId}:${side}`;
@@ -2353,12 +2380,12 @@ function separateSharedEntries(ctx, plans, poolGapRunTrack) {
       const nb = ctx.nodeById.get(b.end === "to" ? eb.from : eb.to);
       const ca = na ? axis === "x" ? ctx.p.col.get(na.id) : ctx.globalRow.get(rowKey(na.lane, ctx.p.row.get(na.id))) : ea.declIndex;
       const cb = nb ? axis === "x" ? ctx.p.col.get(nb.id) : ctx.globalRow.get(rowKey(nb.lane, ctx.p.row.get(nb.id))) : eb.declIndex;
-      if (ca !== cb) return ca - cb;
-      if (axis === "x" && na && nb) {
+      if (axis === "x" && na && nb && hasCorridorRun(a.plan) && hasCorridorRun(b.plan)) {
         const ra = ladderRank(a.plan, nodeId, ca);
         const rb = ladderRank(b.plan, nodeId, cb);
         if (ra !== rb) return ra - rb;
       }
+      if (ca !== cb) return ca - cb;
       return ea.declIndex - eb.declIndex;
     });
     const kind = ctx.nodeById.get(nodeId)?.kind;
@@ -2614,6 +2641,14 @@ function reserveStubRun(ctx, lane, row, yOffset, a, b, e) {
   ctx.stubRuns.set(key2, runs);
   return true;
 }
+function noteStubRun(ctx, lane, row, yOffset, a, b, e) {
+  const key2 = `${rowKey(lane, row)}@${yOffset}`;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  const runs = ctx.stubRuns.get(key2) ?? [];
+  runs.push({ a: lo, b: hi, from: colRunEnd(e, "from"), to: colRunEnd(e, "to") });
+  ctx.stubRuns.set(key2, runs);
+}
+var fallbackOffset = (e) => e.kind === "seq" ? 0 : e.kind === "msg" ? 8 : 10;
 function allocGutter(ctx, gi, side, a, b) {
   const key2 = `${gi}:${side}`;
   const runs = ctx.gutterRuns.get(key2) ?? [];
@@ -2712,9 +2747,10 @@ function westFree(ctx, v, e) {
   }
   return crossRow === 1 && ctx.g.edges.some((o) => o.id === e.id && o.kind === "seq");
 }
-function faceQuiet(ctx, nodeId, face, e, ignore) {
+function faceQuiet(ctx, nodeId, face, e, ignore, skip) {
   return !ctx.g.edges.some((o) => {
     if (o.id === e.id || o.id === ignore || o.from !== nodeId && o.to !== nodeId) return false;
+    if (skip?.(o)) return false;
     const done = ctx.planned.get(o.id);
     if (done) {
       return o.from === nodeId && done.fromSide === face || o.to === nodeId && done.toSide === face;
@@ -3053,6 +3089,7 @@ function planForward(ctx, e) {
   const srcY = fallbackRightY(e, e.from);
   if (rowFreeWide && !sameRow && u.col < v.col && (e.kind !== "seq" || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)) {
     if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+    else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
     noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
     const run = allocGutter(ctx, g1, "exit", gU, gV);
     return {
@@ -3071,6 +3108,7 @@ function planForward(ctx, e) {
   const adjacentPeer = ctx.occupied.get(`${v.lane}:${v.row}:${u.col}`);
   if (e.kind === "assoc" && !isDocLike(u.node.kind) && v.node.kind === "doc" && u.lane === v.lane && !sameRow && v.col === g1 && adjacentPeer !== void 0 && ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to)) {
     noteRowRun(ctx, v.lane, v.row, gutterScale(v.col), v.col, e);
+    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(v.col), e);
     const run = allocGutter(ctx, v.col, "entry", gU, gV);
     return {
       edgeId: e.id,
@@ -3091,6 +3129,7 @@ function planForward(ctx, e) {
   const gv = v.col;
   const r2 = allocGutter(ctx, gv, "entry", chPos, gV);
   if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
   noteRowRun(ctx, v.lane, v.row, gutterScale(gv), v.col, e);
   return {
     edgeId: e.id,
@@ -3236,7 +3275,15 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
   const pair = straight ? ctx.g.edges.find((o) => o.kind === "msg" && o.from === e.to && o.to === e.from) : void 0;
   const pairPlan = pair ? ctx.planned.get(pair.id) : void 0;
   const pairId = pair?.id;
-  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId) && faceQuiet(ctx, v.node.id, toSide, e, pairId))) return void 0;
+  const sameSourceMsg = (o) => o.kind === "msg" && o.from === u.node.id;
+  const sameTargetMsg = (o) => o.kind === "msg" && o.to === v.node.id;
+  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId, sameSourceMsg) && faceQuiet(ctx, v.node.id, toSide, e, pairId, sameTargetMsg))) return void 0;
+  const returnExitsFace = ctx.g.edges.some((o) => {
+    if (o.from !== u.node.id || o.kind !== "seq" || !o.isReturn) return false;
+    const done = ctx.planned.get(o.id);
+    return done ? done.fromSide === fromSide : true;
+  });
+  if (returnExitsFace) return void 0;
   const shareU = !straight && slotted(u.node) ? u.node.id : void 0;
   const shareV = !straight && slotted(v.node) ? v.node.id : void 0;
   const gapRun = {
@@ -3304,6 +3351,8 @@ function planAcrossPoolExterior(ctx, e, u, v, ui, vi) {
   const dstPoolRun = allocPoolGap(ctx, dstGap, outerG + 0.5, dstG - 0.5);
   const srcYOffset = down ? 8 : -8;
   const dstYOffset = down ? -14 : 14;
+  noteStubRun(ctx, u.lane, u.row, srcYOffset, u.col, gutterScale(srcG), e);
+  noteStubRun(ctx, v.lane, v.row, dstYOffset, v.col, gutterScale(dstG), e);
   return {
     edgeId: e.id,
     fromSide: "right",
@@ -3391,6 +3440,7 @@ function planIntoTop(ctx, e, u, v, gU) {
   const g1 = farTargetGutter ? v.col + 1 : u.col + 1;
   noteLabelNeed(ctx, e, g1);
   if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
   if (canEnterBottom) {
     const chB = ctx.globalChannel.get(chBelowKey);
     const r12 = allocGutter(ctx, g1, farTargetGutter ? "entry" : "exit", gU, chB);
@@ -3538,6 +3588,7 @@ function planPoolMsg(ctx, e) {
     const g1 = u.col + 1;
     const run2 = allocGutter(ctx, g1, "exit", gU, bandPos2);
     const srcY = fallbackRightY(e, e.from);
+    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
     return {
       edgeId: e.id,
       fromSide: "right",
@@ -3702,6 +3753,7 @@ function planReturn(ctx, e) {
       );
       const srcY2 = fallbackRightY(e, e.from);
       if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(gup2), e);
+      else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(gup2), e);
       return {
         edgeId: e.id,
         fromSide: "right",
@@ -3753,6 +3805,7 @@ function planReturn(ctx, e) {
   const t = allocChannel(ctx, v.lane, v.row, v.col, gup - 0.5, gU < chV ? "above" : "below", gU, gup - 0.5);
   const srcY = fallbackRightY(e, e.from);
   if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(gup), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(gup), e);
   return {
     edgeId: e.id,
     fromSide: "right",

@@ -314,7 +314,11 @@ function repeatDistantDocuments(
   }
 }
 
-/** 戻り辺選挙前の暫定レイヤリング列（宣言順 DFS の後退辺を除いた最長路）。再掲の距離判定にだけ使う。 */
+/**
+ * 戻り辺選挙前の暫定レイヤリング列（宣言順 DFS の後退辺を除いた最長路）。再掲の距離判定にだけ使う。
+ * P2 の時系列整列（メッセージは受信側の列の下限。S-15）も近似として重ねる。収束しない
+ * （返信が要求より前のノードへ届く）ときはメッセージ抜きの列に戻す。
+ */
 function provisionalColumns(nodes: NormNode[], edges: NormEdge[]): Map<string, number> {
   const trial = edges.map((e) => ({ ...e }));
   electReturns(nodes, trial, [], false);
@@ -338,7 +342,22 @@ function provisionalColumns(nodes: NormNode[], edges: NormEdge[]): Map<string, n
       }
     }
   }
-  return col;
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const messages = trial.filter((e) => e.kind === 'msg' && !e.fromPool && !e.toPool && nodeIds.has(e.from) && nodeIds.has(e.to));
+  if (messages.length === 0) return col;
+  const before = new Map(col);
+  const limit = nodes.length + edges.length + 2;
+  for (let iter = 0; ; iter++) {
+    let changed = false;
+    for (const e of messages) {
+      if ((col.get(e.to) ?? 0) < (col.get(e.from) ?? 0)) { col.set(e.to, col.get(e.from)!); changed = true; }
+    }
+    for (const e of fwd) {
+      if ((col.get(e.to) ?? 0) < (col.get(e.from) ?? 0) + 1) { col.set(e.to, (col.get(e.from) ?? 0) + 1); changed = true; }
+    }
+    if (!changed) return col;
+    if (iter > limit) return before;
+  }
 }
 
 /** 戻り辺を除くシーケンスだけを逆向きにたどり、明示・補完 end へ到達できるノードを求める。 */

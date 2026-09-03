@@ -28,10 +28,11 @@ export function place(g: NormGraph): Placement {
   const col = layerColumns(g, docIds);
   pinBoundaryColumns(g, col, docIds);
   alignMessageTiming(g, col, docIds);
-  keepDocsOffMessageCorridors(g, col, docIds);
   pullReadableDocColumns(g, col, docIds);
   keepDocsOffForeignSpine(g, col, docIds);
   snapStoresToLaneWriter(g, col);
+  // 文書の列移動が終わってから回廊を空ける(先に空けても後段の移動で戻される)
+  keepDocsOffMessageCorridors(g, col, docIds);
   pullStartsToSuccessor(g, col);
   const { row, laneRows, reserved } = assignRows(g, col, docIds);
   const maxCol = Math.max(0, ...[...col.values()]);
@@ -228,7 +229,9 @@ function separateStackedCorridors(
     (a.from === b.from && a.to === b.to) || (a.from === b.to && a.to === b.from);
   // 一度ずらしても同列のまま(制約で連動している)対は二度と試さない(無限連鎖の防止)
   const tried = new Set<string>();
-  for (let round = 0; round < active.length; round++) {
+  // 1 周で 1 対しか動かさないので、上限は対の数(全対を一度ずつ試せる回数)
+  const maxRounds = active.length * active.length + 1;
+  for (let round = 0; round < maxRounds; round++) {
     let bumped = false;
     const seen = new Map<string, NormEdge[]>(); // `${lo}-${hi}:${col}` → 先着のメッセージ
     for (const m of active) {
@@ -311,7 +314,11 @@ function pullStartsToSuccessor(g: NormGraph, col: Map<string, number>): void {
     if (n.kind !== 'start') continue;
     const succ = g.edges.filter((e) => e.kind === 'seq' && e.from === n.id).map((e) => col.get(e.to) ?? 0);
     if (succ.length === 0) continue;
-    const target = Math.min(...succ) - 1;
+    let target = Math.min(...succ) - 1;
+    // 開始イベント自身が送るメッセージ(lax で許容)の受信先より右へは寄せない(S-15 の下限を保つ)
+    for (const e of g.edges) {
+      if (e.kind === 'msg' && e.from === n.id && !e.toPool && col.has(e.to)) target = Math.min(target, col.get(e.to)!);
+    }
     if (target > (col.get(n.id) ?? 0)) col.set(n.id, target);
   }
 }
@@ -458,8 +465,11 @@ function assignRows(g: NormGraph, col: Map<string, number>, docIds: Set<string>)
   };
   // 読み手だけを持つ文書類は、本流の無いレーンでも行 0 に置かない。読み手と同じ行に並ぶと
   // 文書→工程の関連は頂点入りしかなく 3 折れになる。一段下なら行先行 L の 1 折れで済む。
+  // 工程ノードが無いレーン(文書だけのレーン)では行 0 を空けても意味が無いので適用しない
+  const laneHasProcess = new Set(g.nodes.filter((n) => !isDocLike(n.kind)).map((n) => n.lane));
   const readOnlyDoc = (ch: Chain) =>
     ch.nodes.every((m) => isDocLike(m.kind)) &&
+    laneHasProcess.has(ch.lane) &&
     !g.edges.some((e) => ch.nodes.some((m) => m.id === e.to));
   const packed = new Set<Chain>();
   const placeChain = (ch: Chain) => {

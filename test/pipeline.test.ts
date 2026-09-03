@@ -757,6 +757,17 @@ describe('プールごとの時間軸', () => {
     expect(msg.points).toHaveLength(2); // 同列なので一直線
   });
 
+  it('同じ工程から出る 2 本の通信は、同列の 1 本を一直線にし残りが幹線を共有する', () => {
+    // 2 点の一直線はスロット分離を受けないが、同一始点の通信は幹線共有(S-32)で重なってよい。
+    const src = `pool p1[A]\nlane L1\n start s1\n task F[発信]\n task X[受信1]\n s1 -> F\n F -> X\npool p2[B]\nlane L2\n start s2\n task P[相手1]\n task Q[中間]\n task R[相手2]\n s2 -> P\n P -> Q\n Q -> R\n F ~> P\n F ~> R`;
+    const r = noOracleViolations(src);
+    const toP = r.geometry.edges.find((e) => e.kind === 'msg' && e.to === 'P')!;
+    const toR = r.geometry.edges.find((e) => e.kind === 'msg' && e.to === 'R')!;
+    expect(toP.points).toHaveLength(2); // 同列は一直線
+    expect(toR.points[0]).toEqual(toP.points[0]); // 同じ出口点から幹線を共有して分岐
+    expect(toR.points).toHaveLength(4);
+  });
+
   it('互いに開始を送り合う循環は、先に宣言した通信だけを整列に使う', () => {
     // A ~> s2 は s2 ≥ col(A) を満たせる。B ~> s1 は s1 ≥ col(B) ≥ col(s2)+1 ≥ col(A)+1 ≥ col(s1)+2 で
     // 収束しないので制約から外れ、直前の列に戻る。

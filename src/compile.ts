@@ -134,7 +134,8 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   }
 
   // 不変条件の安全網: DFS 後退辺の対象は祖先なので、列は必ず手前になるはず。
-  // プールをまたぐ辺は対象外(時間軸が独立で、S-15 の開始整列でプールごとに列が動く)。
+  // プールをまたぐ辺は対象外(各プールの時間軸は独立で、S-15 の時系列整列は
+  // 受信側の列だけを送信側以降へ動かすため、プール間の関連は前後どちらにもなり得る)。
   const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
   const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
   const poolOfNode = (id: string) => poolOfLane.get(laneOfNode.get(id) ?? '');

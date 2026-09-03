@@ -67,9 +67,6 @@ export interface IrNode {
   compensation?: boolean;
   adhoc?: boolean;
   collection?: boolean; // Data Object / Input / Output の集合マーカー
-  // C-66: 同じ論理文書を参照ごとに描き分けた再掲図形。元ノードの id。
-  // BPMN の DataObjectReference / DataStoreReference と同じ考え方で、意味上は一つの文書。
-  repeatOf?: string;
 }
 
 export interface IrEdge {
@@ -116,6 +113,9 @@ export interface Diagnostic {
 
 export interface NormNode extends IrNode {
   onSpine: boolean; // 本流の選挙結果（C-22）
+  // C-66: 同じ論理文書を参照ごとに描き分けた再掲図形。元ノードの id。正規化(S-25)の出力で、
+  // IR には現れない。BPMN の DataObjectReference / DataStoreReference と同じ考え方。
+  repeatOf?: string;
 }
 
 export interface NormEdge extends IrEdge {

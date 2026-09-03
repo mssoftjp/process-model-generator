@@ -167,6 +167,7 @@ function separateSharedEntries(ctx: Ctx, plans: EdgePlan[], poolGapRunTrack: Map
     const closeness = isUpper ? -t : t;
     return dir * closeness;
   };
+  const hasCorridorRun = (plan: EdgePlan) => plan.points.some((q) => q.y.t === 'poolChannel');
   type Slot = { plan: EdgePlan; end: 'from' | 'to' };
   const groups = new Map<string, { axis: 'x' | 'y'; nodeId: string; slots: Slot[] }>();
   const add = (nodeId: string, side: PortSide, axis: 'x' | 'y', slot: Slot) => {
@@ -227,12 +228,14 @@ function separateSharedEntries(ctx: Ctx, plans: EdgePlan[], poolGapRunTrack: Map
       const nb = ctx.nodeById.get(b.end === 'to' ? eb.from : eb.to);
       const ca = na ? (axis === 'x' ? ctx.p.col.get(na.id)! : ctx.globalRow.get(rowKey(na.lane, ctx.p.row.get(na.id)!))!) : ea.declIndex;
       const cb = nb ? (axis === 'x' ? ctx.p.col.get(nb.id)! : ctx.globalRow.get(rowKey(nb.lane, ctx.p.row.get(nb.id)!))!) : eb.declIndex;
-      if (ca !== cb) return ca - cb;
-      if (axis === 'x' && na && nb) {
+      // 回廊を渡る線同士は梯子順が相手列順より優先(相手列順だけでは、近いトラックの線が
+      // 進行方向と反対側のスロットに置かれて X 字になる)
+      if (axis === 'x' && na && nb && hasCorridorRun(a.plan) && hasCorridorRun(b.plan)) {
         const ra = ladderRank(a.plan, nodeId, ca);
         const rb = ladderRank(b.plan, nodeId, cb);
         if (ra !== rb) return ra - rb;
       }
+      if (ca !== cb) return ca - cb;
       return ea.declIndex - eb.declIndex;
     });
     const kind = ctx.nodeById.get(nodeId)?.kind;
@@ -581,6 +584,20 @@ function reserveStubRun(
   return true;
 }
 
+/** 代替の無い右出しスタブ(fallbackRightY 系)を登録だけする。側面経路が避けるための情報。 */
+function noteStubRun(
+  ctx: Ctx, lane: string, row: number, yOffset: number, a: number, b: number, e: NormEdge,
+): void {
+  const key = `${rowKey(lane, row)}@${yOffset}`;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  const runs = ctx.stubRuns.get(key) ?? [];
+  runs.push({ a: lo, b: hi, from: colRunEnd(e, 'from'), to: colRunEnd(e, 'to') });
+  ctx.stubRuns.set(key, runs);
+}
+
+/** fallbackRightY と同じオフセット(msg +8 / assoc +10)。seq は基線なので 0。 */
+const fallbackOffset = (e: NormEdge) => (e.kind === 'seq' ? 0 : e.kind === 'msg' ? 8 : 10);
+
 // ---- 走行の登録 ----
 
 function allocGutter(ctx: Ctx, gi: number, side: GutterSide, a: number, b: number): number {
@@ -738,9 +755,13 @@ function westFree(ctx: Ctx, v: Cell, e: NormEdge): boolean {
  * 計画済みの辺は実際の入口・出口面で判定し、未計画の辺は静的に保守的に
  * (非 seq の出入り・戻り・プール発は上下面を使い得る)扱う。
  */
-function faceQuiet(ctx: Ctx, nodeId: string, face: PortSide, e: NormEdge, ignore?: string): boolean {
+function faceQuiet(
+  ctx: Ctx, nodeId: string, face: PortSide, e: NormEdge, ignore?: string,
+  skip?: (o: NormEdge) => boolean,
+): boolean {
   return !ctx.g.edges.some((o) => {
     if (o.id === e.id || o.id === ignore || (o.from !== nodeId && o.to !== nodeId)) return false;
+    if (skip?.(o)) return false;
     const done = ctx.planned.get(o.id);
     if (done) {
       return (o.from === nodeId && done.fromSide === face) || (o.to === nodeId && done.toSide === face);
@@ -1159,6 +1180,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)
   ) {
     if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+    else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
     noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
     const run = allocGutter(ctx, g1, 'exit', gU, gV);
     return {
@@ -1180,6 +1202,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to)
   ) {
     noteRowRun(ctx, v.lane, v.row, gutterScale(v.col), v.col, e);
+    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(v.col), e);
     const run = allocGutter(ctx, v.col, 'entry', gU, gV);
     return {
       edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'row-approach',
@@ -1199,6 +1222,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   const gv = v.col; // 対象列のすぐ左の溝
   const r2 = allocGutter(ctx, gv, 'entry', chPos, gV);
   if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
   noteRowRun(ctx, v.lane, v.row, gutterScale(gv), v.col, e);
   return {
     edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'channel-approach',
@@ -1386,7 +1410,22 @@ function planAcrossPoolGapZ(
     : undefined;
   const pairPlan = pair ? ctx.planned.get(pair.id) : undefined;
   const pairId = pair?.id;
-  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId) && faceQuiet(ctx, v.node.id, toSide, e, pairId))) return undefined;
+  // 同一始点の通信は幹線を共有でき(S-32)、同一終点の通信は収束できる(S-91)ので、
+  // 同じ面を使っても一直線と重なってよい。それ以外の非 seq が面を使うなら側面経路へ。
+  const sameSourceMsg = (o: NormEdge) => o.kind === 'msg' && o.from === u.node.id;
+  const sameTargetMsg = (o: NormEdge) => o.kind === 'msg' && o.to === v.node.id;
+  if (
+    straight &&
+    !(faceQuiet(ctx, u.node.id, fromSide, e, pairId, sameSourceMsg) &&
+      faceQuiet(ctx, v.node.id, toSide, e, pairId, sameTargetMsg))
+  ) return undefined;
+  // 同じ面から出る seq 戻りはスロット分離されないので、縦出しと同一点になる(O-8)
+  const returnExitsFace = ctx.g.edges.some((o) => {
+    if (o.from !== u.node.id || o.kind !== 'seq' || !o.isReturn) return false;
+    const done = ctx.planned.get(o.id);
+    return done ? done.fromSide === fromSide : true;
+  });
+  if (returnExitsFace) return undefined;
   const shareU = !straight && slotted(u.node) ? u.node.id : undefined;
   const shareV = !straight && slotted(v.node) ? v.node.id : undefined;
   // 回廊は帯であり離散位置 gapPos では厚みが見えない。反対側から同じ列に着く走行とは、
@@ -1458,6 +1497,8 @@ function planAcrossPoolExterior(
   const dstPoolRun = allocPoolGap(ctx, dstGap, outerG + 0.5, dstG - 0.5);
   const srcYOffset = down ? 8 : -8;
   const dstYOffset = down ? -14 : 14;
+  noteStubRun(ctx, u.lane, u.row, srcYOffset, u.col, gutterScale(srcG), e);
+  noteStubRun(ctx, v.lane, v.row, dstYOffset, v.col, gutterScale(dstG), e);
 
   return {
     edgeId: e.id, fromSide: 'right', toSide: 'right', pattern: 'channel-approach',
@@ -1555,6 +1596,7 @@ function planIntoTop(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number): EdgeP
   const g1 = farTargetGutter ? v.col + 1 : u.col + 1;
   noteLabelNeed(ctx, e, g1);
   if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
   // 真下のセルが埋まっていると、そのノードへの上頂点降りと同じ x で重なるため不可
   if (canEnterBottom) {
     const chB = ctx.globalChannel.get(chBelowKey)!;
@@ -1718,6 +1760,7 @@ function planPoolMsg(ctx: Ctx, e: NormEdge): EdgePlan {
     const g1 = u.col + 1;
     const run = allocGutter(ctx, g1, 'exit', gU, bandPos);
     const srcY = fallbackRightY(e, e.from);
+    noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
     return {
       edgeId: e.id, fromSide: 'right', toSide: below ? 'top' : 'bottom', pattern: 'channel-approach',
       points: [
@@ -1855,6 +1898,7 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
       );
       const srcY = fallbackRightY(e, e.from);
       if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(gup), e);
+      else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(gup), e);
       return {
         edgeId: e.id, fromSide: 'right', toSide: targetSide, pattern: 'return',
         points: [
@@ -1912,6 +1956,7 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
   const t = allocChannel(ctx, v.lane, v.row, v.col, gup - 0.5, gU < chV ? 'above' : 'below', gU, gup - 0.5);
   const srcY = fallbackRightY(e, e.from);
   if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(gup), e);
+  else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(gup), e);
   return {
     edgeId: e.id, fromSide: 'right', toSide: 'top', pattern: 'return',
     points: [

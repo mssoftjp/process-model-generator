@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L26
+# Layout Evolution, L1–L27
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -210,6 +210,10 @@ Outcome: restaurant matches the reference layout (bends 19 → 9, no crossings),
 After L25, a diagram with parallel branches on both sides of a pool boundary (an invoice sent either to accounting or to the requester, each received by its own event) aligned both messages into one column, where the second sender's vertical was blocked by the first sender's cell and the second receiver's by the first receiver's. The message fell back to a side route with several crossings. The rule: two messages between the same adjacent pools that share a column without sharing both endpoints always collide on a column center, so the later one, never a main-path sender, gets a lower bound one column right and the constraints are relaxed again (S-15). A first version bumped request/reply pairs, whose endpoints are tied by their own constraints, and chased them eight columns to the right; pairs are now recognised regardless of direction and a pair that stays aligned after one bump is not tried again. Fuzzing then exposed a latent hazard in the side exits of S-57: two neighbours on one row leaving toward the same gutter at the same offset overlapped inside the gutter, invisible to the discrete model because the intervals only touched. Side-exit stubs are now reserved per row and offset with touching counted as a collision, and a blocked endpoint uses the gutter on its other side.
 
 Outcome: invoice_reception and delivery_acceptance draw the second branch one column right with a straight message (bends 21 → 17 and 21 → 13); no other diagram changed. Fuzz violation set identical.
+
+## L27 — Self-review of L20–L26 (2026-09-03)
+
+A review of the day's changes listed five behavioural gaps and seven inconsistencies; all were closed without changing any corpus diagram. A same-column message from a task lost its straight form whenever a second message left the same face, because a two-point line is never slotted; same-source messages may share a trunk (S-32) and same-target messages may converge (S-91), so those no longer count against the straight form, and a task now fans out as one trunk that splits in the corridor. The ladder order of entry slots was only a tiebreak behind the peer column and is now primary among corridor runs. A vertical message exit no longer coexists with a sequence return leaving the same face (which is never slotted). The right-exit stubs of the fallback patterns are registered alongside the S-57 side stubs, and corridor clearing runs after the document moves that could undo it. Read-only documents keep row 0 in lanes without process nodes, the stacked-branch separation may try every pair, the repetition distance uses the message-aligned provisional columns, and a start that itself sends a message is not pulled past its receiver. The specification moved to v1.4 and `repeatOf` to the normalized node type.
 
 ## Open items retained from the loops
 
