@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { compile } from '../src/compile.ts';
 import { evaluateDelivery, parseLedger } from '../src/eval.ts';
@@ -322,5 +324,25 @@ long -> e`;
     ].join('\n');
     expect(parseLedger(table('要確認'), true).findings.some((finding) => finding.code === 'E-515')).toBe(true);
     expect(parseLedger(table('asked=user-question:1'), true).findings).toEqual([]);
+  });
+});
+
+describe('snapshot comparison script', () => {
+  it('片側だけにある図を報告して失敗する', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'process-model-generator-compare-'));
+    const row = { name: 'shared', bends: 0, hops: 0, uturn: 0, excess: 0, oracle: 0, area: 1, length: 1 };
+    try {
+      const before = join(dir, 'before.json');
+      const after = join(dir, 'after.json');
+      writeFileSync(before, JSON.stringify({ rows: [row] }), 'utf8');
+      writeFileSync(after, JSON.stringify({ rows: [row, { ...row, name: 'added' }] }), 'utf8');
+      const result = spawnSync(process.execPath, [
+        '--import', 'tsx', fileURLToPath(new URL('../scripts/eval/compare.mts', import.meta.url)), before, after,
+      ], { encoding: 'utf8' });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('added missing from A');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
