@@ -2,6 +2,7 @@
 // 現行経路が平行共有するか、同じノードの関連ポートが密集したときだけ走る。
 // 全周ポート上の Hanan grid 候補を残し、競合成分を一度に評価する。
 
+import { isEventKind } from './bpmn.ts';
 import type { EdgeGeom, Geometry, NodeGeom, Pt } from './types.ts';
 import { segmentInteriorCrossing, simplifyPoints } from './wire.ts';
 
@@ -271,10 +272,24 @@ export function boundaryRayPorts(node: NodeGeom): Port[] {
 
 function sidePort(node: NodeGeom, side: 'left' | 'right' | 'top' | 'bottom', at: number): Port {
   at = Math.round(at * 100) / 100;
-  if (side === 'left') return { point: { x: node.x, y: at }, stub: { x: node.x - PORT_STEM, y: at }, dir: 0 };
-  if (side === 'right') return { point: { x: node.x + node.w, y: at }, stub: { x: node.x + node.w + PORT_STEM, y: at }, dir: 0 };
-  if (side === 'top') return { point: { x: at, y: node.y }, stub: { x: at, y: node.y - PORT_STEM }, dir: 1 };
-  return { point: { x: at, y: node.y + node.h }, stub: { x: at, y: node.y + node.h + PORT_STEM }, dir: 1 };
+  // イベントは円: 中心線から外れたポートは外接矩形の辺ではなく円周に置く(O-2)。
+  // 接近区間は辺と同じ向き(水平/垂直)のまま、端点だけ円周へ寄せる
+  const r = isEventKind(node.kind) ? node.w / 2 : 0;
+  const inset = (off: number) => (r > 0 ? r - Math.sqrt(Math.max(0, r * r - off * off)) : 0);
+  if (side === 'left') {
+    const x = node.x + inset(at - node.cy);
+    return { point: { x, y: at }, stub: { x: node.x - PORT_STEM, y: at }, dir: 0 };
+  }
+  if (side === 'right') {
+    const x = node.x + node.w - inset(at - node.cy);
+    return { point: { x, y: at }, stub: { x: node.x + node.w + PORT_STEM, y: at }, dir: 0 };
+  }
+  if (side === 'top') {
+    const y = node.y + inset(at - node.cx);
+    return { point: { x: at, y }, stub: { x: at, y: node.y - PORT_STEM }, dir: 1 };
+  }
+  const y = node.y + node.h - inset(at - node.cx);
+  return { point: { x: at, y }, stub: { x: at, y: node.y + node.h + PORT_STEM }, dir: 1 };
 }
 
 function uniquePorts(ports: Port[]): Port[] {
@@ -527,6 +542,12 @@ function preferredSide(node: NodeGeom, peer: NodeGeom): PortSide {
 }
 
 function portSide(node: NodeGeom, p: Pt): PortSide | undefined {
+  if (isEventKind(node.kind)) {
+    // 円周上の点は矩形の辺に乗らないので、中心から見た方角で面を決める
+    const dx = p.x - node.cx, dy = p.y - node.cy;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return undefined;
+    return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
+  }
   if (Math.abs(p.x - node.x) < 1) return 'left';
   if (Math.abs(p.x - node.x - node.w) < 1) return 'right';
   if (Math.abs(p.y - node.y) < 1) return 'top';

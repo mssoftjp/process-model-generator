@@ -77,6 +77,14 @@ function genSource(rnd: () => number): string {
     const [, j] = senders[Math.floor(rnd() * senders.length)]!;
     out.push(`n${j} ~> nb${i}`);
   }
+  // 境界イベントから出るシーケンス(同一プールのノードへ。戻り・合流・文書行きも混ざる)
+  for (let i = 0; i < nodeCount; i++) {
+    if (!decl.flat().some((d) => d.includes(` nb${i}[`)) || rnd() < 0.5) continue;
+    const targets = laneOf.map((l, j) => [l, j] as const).filter(([l, j]) => j !== i && poolOfLane(l) === poolOfLane(laneOf[i]!));
+    if (targets.length === 0) continue;
+    const [, k] = targets[Math.floor(rnd() * targets.length)]!;
+    out.push(`nb${i} -> n${k}`);
+  }
   // 書類とデータ関連(生産者→doc、doc→読み手。稀に doc 同士や逆向きも混ぜる)
   const docCount = Math.floor(rnd() * 4);
   for (let d = 0; d < docCount; d++) {

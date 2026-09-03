@@ -910,8 +910,9 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   const rowFreeWide = rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`);
 
   if (e.kind === 'assoc') {
-    // 同列の直落とし(帳票フローの型): 書類は工程の真下に落ち、真下の工程に真上から読まれる
-    if (u.col === v.col && gV > gU && reserveColRun(ctx, u.col, gU, gV, e)) {
+    // 同列の直落とし(帳票フローの型): 書類は工程の真下に落ち、真下の工程に真上から読まれる。
+    // 境界イベントは対象の右半分に載るので列中心と x が合わず、2 点形は斜線になる
+    if (u.col === v.col && gV > gU && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
       markExclusiveColRun(ctx, u.col);
       return {
         edgeId: e.id, fromSide: 'bottom', toSide: 'top', pattern: 'drop',
@@ -1054,7 +1055,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     // 下ラベル付きイベントの bottom はラベル動線と衝突するため使わない(C-65)
     const chV = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
     if (gV > gU && bottomFree(u.node)) {
-      if (u.col === v.col && reserveColRun(ctx, u.col, gU, gV, e)) {
+      if (u.col === v.col && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
         markExclusiveColRun(ctx, u.col);
         return {
           edgeId: e.id, fromSide: 'bottom', toSide: 'top', pattern: 'drop',
@@ -1111,25 +1112,35 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     return planIntoTop(ctx, e, u, v, gU);
   }
 
+  // 境界イベントから同じ行の右のノードへ: 境界イベントは対象 Activity の辺の高さに載るので
+  // 基線の 2 点直線は斜線になる。対象の左の溝(入りブロック)で基線へ降りる 3 区間にする。
+  if (sameRow && rowFree && isAttachedBoundary(u.node) && u.col < v.col && (e.kind === 'seq' || e.kind === 'assoc')) {
+    const gx = v.col;
+    const run = allocGutter(ctx, gx, 'entry', gU, gV);
+    const dstY = e.kind === 'seq' ? portY(e.to, 'left') : nodeCY(e.to, -10);
+    noteLabelNeed(ctx, e, u.col + 1);
+    noteRowRun(ctx, v.lane, v.row, gutterScale(gx), v.col, e);
+    return {
+      edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'row-approach',
+      points: [
+        { x: portX(e.from, 'right'), y: portY(e.from, 'right') },
+        { x: gutterX(gx, 'entry', run), y: portY(e.from, 'right') },
+        { x: gutterX(gx, 'entry', run), y: dstY },
+        { x: portX(e.to, 'left'), y: dstY },
+      ],
+    };
+  }
+
   // direct: 同一行・間にノード無し
   if (sameRow && rowFree && e.kind === 'seq') {
     noteLabelNeed(ctx, e, u.col + 1);
     noteRowRun(ctx, u.lane, u.row, u.col, v.col, e);
-    // Boundary Event は P4 で対象 Activity の論理 bottom へ重ねるため、セル基線から
-    // 実ポートが移動する。2点の direct は移動後に斜線になるので、終点 x で曲げる。
-    const points = isAttachedBoundary(u.node)
-      ? [
-          { x: portX(e.from, 'right'), y: portY(e.from, 'right') },
-          { x: portX(e.to, 'left'), y: portY(e.from, 'right') },
-          { x: portX(e.to, 'left'), y: portY(e.to, 'left') },
-        ]
-      : [
-          { x: portX(e.from, 'right'), y: portY(e.from, 'right') },
-          { x: portX(e.to, 'left'), y: portY(e.to, 'left') },
-        ];
     return {
       edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'direct',
-      points,
+      points: [
+        { x: portX(e.from, 'right'), y: portY(e.from, 'right') },
+        { x: portX(e.to, 'left'), y: portY(e.to, 'left') },
+      ],
     };
   }
   // 時間を戻る関連(対象が左)は基線に乗せない: 右出→左入の直線が自身や途中ノードを貫く
@@ -2132,7 +2143,9 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
     if (outer !== undefined && targetDirect && reserveColRun(ctx, v.col, outer, gV, e)) {
       const gup = u.col + 1;
       const sourceSide: PortSide = outer < gU ? 'top' : 'bottom';
-      const sourceDirect = sourceSide === 'top' ? topFree(ctx, u) : bottomFree(u.node);
+      // 境界イベントの外向きの面は受信メッセージの入口(S-53)なので縦出ししない
+      const sourceDirect = !isAttachedBoundary(u.node) &&
+        (sourceSide === 'top' ? topFree(ctx, u) : bottomFree(u.node));
       if (sourceDirect && reserveColRun(ctx, u.col, outer, gU, e)) {
         const t = allocChannel(
           ctx, u.lane, outerRow, v.col, u.col,

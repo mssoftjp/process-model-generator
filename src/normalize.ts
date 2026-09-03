@@ -415,14 +415,22 @@ function reaches(from: string, to: string, outAdj: Map<string, NormEdge[]>): boo
 function electReturns(nodes: NormNode[], edges: NormEdge[], report: Diagnostic[], strict: boolean): void {
   const docIds = new Set(nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
   const layering = edges.filter((e) => isLayeringSeq(e, docIds) && nodes.some((n) => n.id === e.from) && nodes.some((n) => n.id === e.to));
+  // 境界イベントから出る辺は、対象 Activity から出る辺として循環を判定する(S-22)。
+  // 境界イベントは対象と同じ列に張り付く(S-53)ので、対象より前のノードへ戻る辺は
+  // 対象を通る循環であり、前向きに層化すると張り付きと矛盾して収束しない。
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const sourceOf = (id: string): string => {
+    const n = nodeById.get(id);
+    return n && isAttachedBoundary(n) && n.attachedTo && nodeById.has(n.attachedTo) ? n.attachedTo : id;
+  };
   const fullAdj = new Map<string, NormEdge[]>();
   for (const n of nodes) fullAdj.set(n.id, []);
   for (const e of layering.slice().sort((a, b) => a.declIndex - b.declIndex)) {
-    fullAdj.get(e.from)?.push(e);
+    fullAdj.get(sourceOf(e.from))?.push(e);
   }
   for (const e of edges) {
     if (!e.returnHint) continue;
-    const ok = e.kind === 'seq' && !e.fromPool && !e.toPool && fullAdj.has(e.from) && reaches(e.to, e.from, fullAdj);
+    const ok = e.kind === 'seq' && !e.fromPool && !e.toPool && fullAdj.has(e.from) && reaches(e.to, sourceOf(e.from), fullAdj);
     if (!ok) {
       report.push({
         level: strict ? 'error' : 'warning',
@@ -439,7 +447,7 @@ function electReturns(nodes: NormNode[], edges: NormEdge[], report: Diagnostic[]
   for (const n of nodes) outAdj.set(n.id, []);
   for (const e of layering.slice().sort((a, b) => a.declIndex - b.declIndex)) {
     if (e.isReturn) continue;
-    outAdj.get(e.from)?.push(e);
+    outAdj.get(sourceOf(e.from))?.push(e);
   }
   const hasIn = new Set(edges.map((e) => e.to));
   const roots = [

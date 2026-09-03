@@ -1561,14 +1561,19 @@ function reaches(from, to, outAdj) {
 function electReturns(nodes, edges, report, strict2) {
   const docIds = new Set(nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
   const layering = edges.filter((e) => isLayeringSeq(e, docIds) && nodes.some((n) => n.id === e.from) && nodes.some((n) => n.id === e.to));
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const sourceOf = (id) => {
+    const n = nodeById.get(id);
+    return n && isAttachedBoundary(n) && n.attachedTo && nodeById.has(n.attachedTo) ? n.attachedTo : id;
+  };
   const fullAdj = /* @__PURE__ */ new Map();
   for (const n of nodes) fullAdj.set(n.id, []);
   for (const e of layering.slice().sort((a, b) => a.declIndex - b.declIndex)) {
-    fullAdj.get(e.from)?.push(e);
+    fullAdj.get(sourceOf(e.from))?.push(e);
   }
   for (const e of edges) {
     if (!e.returnHint) continue;
-    const ok = e.kind === "seq" && !e.fromPool && !e.toPool && fullAdj.has(e.from) && reaches(e.to, e.from, fullAdj);
+    const ok = e.kind === "seq" && !e.fromPool && !e.toPool && fullAdj.has(e.from) && reaches(e.to, sourceOf(e.from), fullAdj);
     if (!ok) {
       report.push({
         level: strict2 ? "error" : "warning",
@@ -1584,7 +1589,7 @@ function electReturns(nodes, edges, report, strict2) {
   for (const n of nodes) outAdj.set(n.id, []);
   for (const e of layering.slice().sort((a, b) => a.declIndex - b.declIndex)) {
     if (e.isReturn) continue;
-    outAdj.get(e.from)?.push(e);
+    outAdj.get(sourceOf(e.from))?.push(e);
   }
   const hasIn = new Set(edges.map((e) => e.to));
   const roots = [
@@ -2930,7 +2935,7 @@ function planForward(ctx, e) {
   const rowFree = !nodeBetweenOnRow(ctx, v.lane, v.row, u.col + 1, v.col - 1);
   const rowFreeWide = rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`);
   if (e.kind === "assoc") {
-    if (u.col === v.col && gV > gU && reserveColRun(ctx, u.col, gU, gV, e)) {
+    if (u.col === v.col && gV > gU && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
       markExclusiveColRun(ctx, u.col);
       return {
         edgeId: e.id,
@@ -3039,7 +3044,7 @@ function planForward(ctx, e) {
     if (poolGap !== void 0) return planAcrossPoolGap(ctx, e, u, v, poolGap);
     const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
     if (gV > gU && bottomFree(u.node)) {
-      if (u.col === v.col && reserveColRun(ctx, u.col, gU, gV, e)) {
+      if (u.col === v.col && !isAttachedBoundary(u.node) && reserveColRun(ctx, u.col, gU, gV, e)) {
         markExclusiveColRun(ctx, u.col);
         return {
           edgeId: e.id,
@@ -3093,23 +3098,37 @@ function planForward(ctx, e) {
     }
     return planIntoTop(ctx, e, u, v, gU);
   }
+  if (sameRow && rowFree && isAttachedBoundary(u.node) && u.col < v.col && (e.kind === "seq" || e.kind === "assoc")) {
+    const gx = v.col;
+    const run = allocGutter(ctx, gx, "entry", gU, gV);
+    const dstY = e.kind === "seq" ? portY(e.to, "left") : nodeCY(e.to, -10);
+    noteLabelNeed(ctx, e, u.col + 1);
+    noteRowRun(ctx, v.lane, v.row, gutterScale(gx), v.col, e);
+    return {
+      edgeId: e.id,
+      fromSide: "right",
+      toSide: "left",
+      pattern: "row-approach",
+      points: [
+        { x: portX(e.from, "right"), y: portY(e.from, "right") },
+        { x: gutterX(gx, "entry", run), y: portY(e.from, "right") },
+        { x: gutterX(gx, "entry", run), y: dstY },
+        { x: portX(e.to, "left"), y: dstY }
+      ]
+    };
+  }
   if (sameRow && rowFree && e.kind === "seq") {
     noteLabelNeed(ctx, e, u.col + 1);
     noteRowRun(ctx, u.lane, u.row, u.col, v.col, e);
-    const points = isAttachedBoundary(u.node) ? [
-      { x: portX(e.from, "right"), y: portY(e.from, "right") },
-      { x: portX(e.to, "left"), y: portY(e.from, "right") },
-      { x: portX(e.to, "left"), y: portY(e.to, "left") }
-    ] : [
-      { x: portX(e.from, "right"), y: portY(e.from, "right") },
-      { x: portX(e.to, "left"), y: portY(e.to, "left") }
-    ];
     return {
       edgeId: e.id,
       fromSide: "right",
       toSide: "left",
       pattern: "direct",
-      points
+      points: [
+        { x: portX(e.from, "right"), y: portY(e.from, "right") },
+        { x: portX(e.to, "left"), y: portY(e.to, "left") }
+      ]
     };
   }
   if (sameRow && rowFree && e.kind === "assoc" && u.col < v.col) {
@@ -4004,7 +4023,7 @@ function planReturn(ctx, e) {
     if (outer !== void 0 && targetDirect && reserveColRun(ctx, v.col, outer, gV, e)) {
       const gup2 = u.col + 1;
       const sourceSide = outer < gU ? "top" : "bottom";
-      const sourceDirect = sourceSide === "top" ? topFree(ctx, u) : bottomFree(u.node);
+      const sourceDirect = !isAttachedBoundary(u.node) && (sourceSide === "top" ? topFree(ctx, u) : bottomFree(u.node));
       if (sourceDirect && reserveColRun(ctx, u.col, outer, gU, e)) {
         const t3 = allocChannel(
           ctx,
@@ -5827,10 +5846,22 @@ function boundaryRayPorts(node) {
 }
 function sidePort(node, side, at) {
   at = Math.round(at * 100) / 100;
-  if (side === "left") return { point: { x: node.x, y: at }, stub: { x: node.x - PORT_STEM, y: at }, dir: 0 };
-  if (side === "right") return { point: { x: node.x + node.w, y: at }, stub: { x: node.x + node.w + PORT_STEM, y: at }, dir: 0 };
-  if (side === "top") return { point: { x: at, y: node.y }, stub: { x: at, y: node.y - PORT_STEM }, dir: 1 };
-  return { point: { x: at, y: node.y + node.h }, stub: { x: at, y: node.y + node.h + PORT_STEM }, dir: 1 };
+  const r = isEventKind(node.kind) ? node.w / 2 : 0;
+  const inset = (off) => r > 0 ? r - Math.sqrt(Math.max(0, r * r - off * off)) : 0;
+  if (side === "left") {
+    const x = node.x + inset(at - node.cy);
+    return { point: { x, y: at }, stub: { x: node.x - PORT_STEM, y: at }, dir: 0 };
+  }
+  if (side === "right") {
+    const x = node.x + node.w - inset(at - node.cy);
+    return { point: { x, y: at }, stub: { x: node.x + node.w + PORT_STEM, y: at }, dir: 0 };
+  }
+  if (side === "top") {
+    const y2 = node.y + inset(at - node.cx);
+    return { point: { x: at, y: y2 }, stub: { x: at, y: node.y - PORT_STEM }, dir: 1 };
+  }
+  const y = node.y + node.h - inset(at - node.cx);
+  return { point: { x: at, y }, stub: { x: at, y: node.y + node.h + PORT_STEM }, dir: 1 };
 }
 function uniquePorts(ports) {
   const seen = /* @__PURE__ */ new Set();
@@ -6062,6 +6093,11 @@ function preferredSide(node, peer) {
   return Math.abs(dx) >= Math.abs(dy) ? dx >= 0 ? "right" : "left" : dy >= 0 ? "bottom" : "top";
 }
 function portSide(node, p) {
+  if (isEventKind(node.kind)) {
+    const dx = p.x - node.cx, dy = p.y - node.cy;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return void 0;
+    return Math.abs(dx) >= Math.abs(dy) ? dx >= 0 ? "right" : "left" : dy >= 0 ? "bottom" : "top";
+  }
   if (Math.abs(p.x - node.x) < 1) return "left";
   if (Math.abs(p.x - node.x - node.w) < 1) return "right";
   if (Math.abs(p.y - node.y) < 1) return "top";

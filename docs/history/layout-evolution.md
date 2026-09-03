@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L31
+# Layout Evolution, L1–L32
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -241,9 +241,13 @@ Extending the fuzz generator with sequence flows leaving boundary events (to a n
 
 Outcome: corpus unchanged (28 diagrams byte-identical); the regression test covers the two-boundary case.
 
-## Open items retained from the loops
+## L32 — Flows leaving boundary events (2026-09-03)
 
-- **Sequence flows leaving boundary events** (found in L31): with the extended generator, 98 of 4,000 fuzz cases violate the oracle, mostly overlapping runs around synthetic gateways and returns that begin at a boundary event. Not yet addressed.
+The generator extension of L31 (a sequence flow from a boundary event to a node of the same pool) produced 98 violations in 4,000 cases. One cause explained most of them: the return election walks the graph by node, and a boundary event has no incoming sequence flow, so a flow from it back to an earlier node never closed a cycle. It was layered forward, which pushed the boundary event ahead of the node it returns to while S-53 pins it to its activity; the relaxation could not converge, the boundary event ended up columns left of its activity, and every line leaving the drawn circle ran backwards through it. The election now traverses a boundary event's edges as edges of its activity, so such a flow is a return edge. Two smaller causes remained: a two-point vertical from the boundary event to a node directly below was diagonal because the circle sits on the activity's right half, and the return pattern's direct vertical exit used the event's outward vertex, which receives its message; both now fall to the gutter forms, and a same-row target is reached through the gutter left of it. The last case was unrelated to boundary events: the data-association improver placed crowded ports on the bounding box of an event instead of its circle.
+
+Outcome: the extended generator is now part of the test suite; 2,000 seeds × 2 orientations with it give zero violations; corpus unchanged. The specification moved to v1.8.
+
+## Open items retained from the loops
 
 - **C-66** Repeated glyphs are rule-based (S-25); a hint to force or forbid repetition per document is not yet exposed in the DSL.
 - **C-68** Conditional port opening is implemented only where static safety is proven.
