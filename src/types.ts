@@ -334,4 +334,6 @@ export interface CompileResult {
   geometry: Geometry;
   normalized: NormGraph;
   diagnostics: Diagnostic[];
+  /** 採用された経路計画(P3)。指標や評価が経路を再実行せずに参照する。 */
+  plan: RoutePlan;
 }

@@ -12,6 +12,7 @@
 import { isAttachedBoundary } from './bpmn.ts';
 import { EVENT_R } from './measure.ts';
 import { boundaryTopEvents } from './message-labels.ts';
+import { buildPoolIndex } from './pools.ts';
 import { GRID, measureText, quant } from './metrics.ts';
 import type { GutterSide, LaneGeom, NodeCell, NodeGeom, NormGraph, Placement, PoolGeom, PortSide, RoutePlan } from './types.ts';
 
@@ -142,14 +143,13 @@ export function computeCoords(
   let y = PAD + titleH;
   let prevPool: string | undefined | null = null;
   const poolSpan = new Map<string, { y0: number; y1: number }>();
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   for (let li = 0; li < g.lanes.length; li++) {
     const lane = g.lanes[li]!;
     // プール境界でプール溝(帯間の隙間)を挟む
-    const myPool = poolOfLane.get(lane.id);
+    const myPool = pools.poolOfLane(lane.id);
     if (prevPool !== null && myPool !== prevPool) {
-      const gap = poolIndex.get(prevPool!);
+      const gap = pools.indexOf(prevPool!);
       if (gap !== undefined) {
         const tracks = rp.poolGapTracks.get(gap) ?? 0;
         const h = quant(Math.max(POOL_GAP_BASE, tracks * TRACK_PITCH + (tracks > 0 ? 2 * POOL_GAP_PAD : 0)));
@@ -204,7 +204,7 @@ export function computeCoords(
     // プール全体のスパンをラベル長まで広げる(帯はレーンでタイル張りのまま、
     // 最終レーンが余白を引き受ける)。短い工程×長い部署名で隣のプール名と
     // 重なるのを防ぐ
-    if (myPool !== undefined && poolOfLane.get(g.lanes[li + 1]?.id ?? '') !== myPool) {
+    if (myPool !== undefined && pools.poolOfLane(g.lanes[li + 1]?.id ?? '') !== myPool) {
       const pl = g.pools.find((p) => p.id === myPool);
       if (pl) {
         const poolStart = poolSpan.get(myPool)?.y0 ?? laneTop;

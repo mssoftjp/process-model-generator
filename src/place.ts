@@ -7,6 +7,7 @@
 //   「層とレーンのどちらを先に固定するか」（C-33）はここで問いごと消える。
 
 import { isAttachedBoundary } from './bpmn.ts';
+import { buildPoolIndex } from './pools.ts';
 import { isDocLike } from './types.ts';
 import type { NormEdge, NormGraph, NormNode, Placement } from './types.ts';
 
@@ -228,9 +229,8 @@ function separateStackedCorridors(
   relax: (active: NormEdge[]) => boolean, anchor: (id: string) => string,
 ): void {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
-  const poolIdx = (id: string) => poolIndex.get(poolOfLane.get(nodeById.get(id)?.lane ?? '') ?? '');
+  const pools = buildPoolIndex(g);
+  const poolIdx = (id: string) => pools.indexOfNode(id);
   const spine = (id: string) => nodeById.get(id)?.onSpine === true;
   const sameNodes = (a: NormEdge, b: NormEdge) =>
     (a.from === b.from && a.to === b.to) || (a.from === b.to && a.to === b.from);
@@ -280,23 +280,22 @@ function separateStackedCorridors(
 function keepDocsOffMessageCorridors(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const laneIndex = new Map(g.lanes.map((l, i) => [l.id, i]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   const corridors = new Set<string>(); // `${lane}:${col}`
   for (const e of g.edges) {
     if (e.kind !== 'msg' || e.fromPool || e.toPool) continue;
     const u = nodeById.get(e.from);
     const v = nodeById.get(e.to);
     if (!u || !v || col.get(u.id) !== col.get(v.id)) continue;
-    const pu = poolIndex.get(poolOfLane.get(u.lane) ?? '');
-    const pv = poolIndex.get(poolOfLane.get(v.lane) ?? '');
+    const pu = pools.indexOf(pools.poolOfLane(u.lane));
+    const pv = pools.indexOf(pools.poolOfLane(v.lane));
     if (pu === undefined || pv === undefined || Math.abs(pu - pv) !== 1) continue;
     const c = col.get(u.id)!;
     const down = pu < pv;
     for (const [end, towardGap] of [[u, down], [v, !down]] as const) {
       const li = laneIndex.get(end.lane)!;
       for (const lane of g.lanes) {
-        if (poolOfLane.get(lane.id) !== poolOfLane.get(end.lane)) continue;
+        if (pools.poolOfLane(lane.id) !== pools.poolOfLane(end.lane)) continue;
         const i = laneIndex.get(lane.id)!;
         if (towardGap ? i >= li : i <= li) corridors.add(`${lane.id}:${c}`);
       }

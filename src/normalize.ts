@@ -15,6 +15,7 @@
 //      同一レーン継続 > 宣言順。Default Flow（->/）は本流ヒントではない。
 
 import { isAttachedBoundary, isGatewayKind } from './bpmn.ts';
+import { buildPoolIndex } from './pools.ts';
 import { isDocLike } from './types.ts';
 import type { Diagnostic, Ir, NormEdge, NormGraph, NormNode } from './types.ts';
 
@@ -110,14 +111,14 @@ export function normalize(ir: Ir, strict = false): NormGraph {
   }
 
   // ---- 5. 開始・終了の補完（シーケンスの流れだけを見る。doc は対象外） ----
-  const poolOfLane = new Map(ir.lanes.map((l) => [l.id, l.pool]));
+  const pools = buildPoolIndex(ir);
   const processPools: Array<string | undefined> = [];
   for (const n of nodes) {
     if (isDocLike(n.kind)) continue;
-    const pool = poolOfLane.get(n.lane);
+    const pool = pools.poolOfLane(n.lane);
     if (!processPools.includes(pool)) processPools.push(pool);
   }
-  const inPool = (n: NormNode, pool: string | undefined) => poolOfLane.get(n.lane) === pool;
+  const inPool = (n: NormNode, pool: string | undefined) => pools.poolOfLane(n.lane) === pool;
   for (const pool of processPools) {
     const processNodes = nodes.filter((n) => !isDocLike(n.kind) && !isAttachedBoundary(n) && inPool(n, pool));
     const hasExplicitStart = processNodes.some((n) => n.kind === 'start' && !n.synthetic);
@@ -208,7 +209,7 @@ export function normalize(ir: Ir, strict = false): NormGraph {
   const reachesEnd = nodesReachingEnd(nodes, edges);
   const firstByPool = new Map<string, NormNode>();
   for (const start of starts) {
-    const pool = poolOfLane.get(start.lane) ?? '';
+    const pool = pools.poolOfLane(start.lane) ?? '';
     if (!firstByPool.has(pool)) firstByPool.set(pool, start);
   }
   for (const [pool, first] of firstByPool) {

@@ -17,6 +17,7 @@
 //   O-11 同じノードのメッセージ入口と出口は同一点を共有しない
 
 import { isAttachedBoundary, isEventKind, isGatewayKind } from './bpmn.ts';
+import { buildPoolIndex } from './pools.ts';
 import type { Diagnostic, EdgeGeom, Geometry, NodeGeom, NormGraph, Pt } from './types.ts';
 
 const EPS = 0.5;
@@ -91,13 +92,9 @@ export function checkOracle(g: NormGraph, geo: Geometry): Diagnostic[] {
   }
 
   // O-7
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   const poolGeom = new Map(geo.pools.map((pl) => [pl.id, pl]));
-  const poolOfNode = (id: string) => {
-    const n = normNode.get(id);
-    return n ? poolOfLane.get(n.lane) : id; // プール参照は id 自身がプール
-  };
+  const poolOfNode = (id: string) => (normNode.has(id) ? pools.poolOfNode(id) : id); // プール参照は id 自身がプール
   for (const e of geo.edges) {
     if (e.kind === 'msg' && poolOfNode(e.from) === poolOfNode(e.to)) {
       out.push(viol('O-7', `メッセージ ${e.id} が同一プール内を流れている`));
@@ -112,8 +109,8 @@ export function checkOracle(g: NormGraph, geo: Geometry): Diagnostic[] {
     if (e.kind !== 'msg' || e.fromPool || e.toPool) continue;
     const up = poolOfNode(e.from);
     const vp = poolOfNode(e.to);
-    const ui = poolIndex.get(up!);
-    const vi = poolIndex.get(vp!);
+    const ui = pools.indexOf(up);
+    const vi = pools.indexOf(vp);
     if (ui === undefined || vi === undefined) continue;
     if (Math.abs(ui - vi) > 1) {
       const lo = Math.min(ui, vi);

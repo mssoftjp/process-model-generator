@@ -4,6 +4,7 @@
 // P1(計測)と P3(経路計画)が同じ集合を見る。片方だけ変えるとラベルとポートが衝突する。
 
 import { isAttachedBoundary, isEventKind } from './bpmn.ts';
+import { buildPoolIndex } from './pools.ts';
 import type { NormGraph } from './types.ts';
 
 /**
@@ -13,21 +14,15 @@ import type { NormGraph } from './types.ts';
  * P1(計測の張り出し)・P3(経路)・P4(重ね位置)が同じ集合を見る。
  */
 export function boundaryTopEvents(g: NormGraph): Set<string> {
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const idxOfNode = (id: string) => {
-    const n = nodeById.get(id);
-    return n ? poolIndex.get(poolOfLane.get(n.lane) ?? '') : undefined;
-  };
+  const pools = buildPoolIndex(g);
   const out = new Set<string>();
   for (const n of g.nodes) {
     if (!isAttachedBoundary(n)) continue;
-    const own = poolIndex.get(poolOfLane.get(n.lane) ?? '');
+    const own = pools.indexOfNode(n.id);
     if (own === undefined) continue;
     const fromAbove = g.edges.some((e) => {
       if (e.kind !== 'msg' || e.to !== n.id) return false;
-      const from = e.fromPool ? poolIndex.get(e.fromPool) : idxOfNode(e.from);
+      const from = e.fromPool ? pools.indexOf(e.fromPool) : pools.indexOfNode(e.from);
       return from !== undefined && from < own;
     });
     if (fromAbove) out.add(n.id);
@@ -37,15 +32,11 @@ export function boundaryTopEvents(g: NormGraph): Set<string> {
 
 /** 交差軸マイナス側へラベルを逃がすイベントの id 集合 */
 export function crossMinusLabelEvents(g: NormGraph): Set<string> {
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const pools = buildPoolIndex(g);
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const out = new Set<string>();
-  const poolIdx = (id: string | undefined) => (id === undefined ? undefined : poolIndex.get(id));
-  const nodePoolIdx = (id: string) => {
-    const n = nodeById.get(id);
-    return n ? poolIdx(poolOfLane.get(n.lane)) : undefined;
-  };
+  const poolIdx = (id: string | undefined) => pools.indexOf(id);
+  const nodePoolIdx = (id: string) => pools.indexOfNode(id);
   for (const e of g.edges) {
     if (e.kind !== 'msg') continue;
     if (e.fromPool) {
@@ -64,8 +55,8 @@ export function crossMinusLabelEvents(g: NormGraph): Set<string> {
     }
     const u = nodeById.get(e.from);
     const v = nodeById.get(e.to);
-    const ui = u ? poolIdx(poolOfLane.get(u.lane)) : undefined;
-    const vi = v ? poolIdx(poolOfLane.get(v.lane)) : undefined;
+    const ui = u ? pools.indexOf(pools.poolOfLane(u.lane)) : undefined;
+    const vi = v ? pools.indexOf(pools.poolOfLane(v.lane)) : undefined;
     if (ui === undefined || vi === undefined || Math.abs(ui - vi) !== 1) continue;
     if (ui < vi && u && isEventKind(u.kind)) out.add(u.id);
     if (vi < ui && v && isEventKind(v.kind)) out.add(v.id);

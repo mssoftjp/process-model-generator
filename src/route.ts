@@ -29,6 +29,7 @@
 
 import { isAttachedBoundary, isEventKind, isGatewayKind } from './bpmn.ts';
 import { boundaryTopEvents, crossMinusLabelEvents } from './message-labels.ts';
+import { buildPoolIndex, type PoolIndex } from './pools.ts';
 import { isDocLike } from './types.ts';
 import type {
   EdgePlan, GutterSide, NormEdge, NormGraph, NormNode, Placement, PortSide, RoutePlan, SymX, SymY,
@@ -71,6 +72,7 @@ interface Ctx {
   // 同じ行の隣り合うノードが同じ溝へ左右から同じ高さで出ると、溝の中でトラック位置の差だけ
   // 重なる。離散区間では端点接触なので、この登録だけ端点を含めて衝突とみなす。
   stubRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
+  pools: PoolIndex; // レーン→プール、プール→順位(全相で共有)
   labelCrossMinus: ReadonlySet<string>; // ラベルを交差軸マイナス側へ逃がしたイベント(P1 と同じ集合)
   boundaryTop: ReadonlySet<string>; // 対象 Activity の上辺に掛ける境界イベント(P1/P4 と同じ集合、S-53)
   planned: Map<string, EdgePlan>; // 宣言順で先に計画した辺(入口面の静的参照に使う)
@@ -96,12 +98,12 @@ export function route(
   const globalRow = new Map<string, number>();
   const globalChannel = new Map<string, number>();
   const globalPoolGap = new Map<number, number>();
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   let pos = 0;
   let prevPool: string | undefined | null = null;
   for (const lane of g.lanes) {
     if (prevPool !== null && lane.pool !== prevPool) {
-      const pi = poolIndex.get(prevPool!);
+      const pi = pools.indexOf(prevPool!);
       if (pi !== undefined) globalPoolGap.set(pi, pos++);
     }
     prevPool = lane.pool;
@@ -119,6 +121,7 @@ export function route(
     colRuns: new Map(),
     rowRuns: new Map(),
     stubRuns: new Map(),
+    pools,
     labelCrossMinus: crossMinusLabelEvents(g),
     boundaryTop: boundaryTopEvents(g),
     planned: new Map(),
@@ -151,8 +154,6 @@ export function route(
 /** 同じ図形入口へ収束する非シーケンス線を、辺上の短いスロットへ分ける。 */
 function separateSharedEntries(ctx: Ctx, plans: EdgePlan[], poolGapRunTrack: Map<number, number>): void {
   const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
   /**
    * 同じ面から同じ方向へ回廊を渡る通信同士の順序(梯子形の規則): 回廊で自分に近いトラックで
    * 曲がる線ほど進行方向側のスロットに置く。反対にすると、遠いトラックまで降りる線の縦区間を
@@ -162,8 +163,7 @@ function separateSharedEntries(ctx: Ctx, plans: EdgePlan[], poolGapRunTrack: Map
     const pt = plan.points.find((q) => q.y.t === 'poolChannel');
     if (!pt || pt.y.t !== 'poolChannel') return 0;
     const t = poolGapRunTrack.get(pt.y.run) ?? 0;
-    const own = ctx.nodeById.get(ownId);
-    const ownPool = own ? poolIndex.get(lanePool.get(own.lane) ?? '') : undefined;
+    const ownPool = ctx.pools.indexOfNode(ownId);
     if (ownPool === undefined) return 0;
     const isUpper = ownPool === pt.y.gap;
     const dir = Math.sign(peerCol - (ctx.p.col.get(ownId) ?? 0));
@@ -781,15 +781,11 @@ const bottomFree = (n: NormNode) =>
 
 /** 交差軸プラス側のプールから着くメッセージは、ラベルを反対側へ逃すので下ポートが空く。 */
 function poolMessageFacesBottom(ctx: Ctx, nodeId: string): boolean {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const node = ctx.nodeById.get(nodeId);
-  if (!node) return false;
-  const ni = poolIndex.get(lanePool.get(node.lane)!);
+  const ni = ctx.pools.indexOfNode(nodeId);
   if (ni === undefined) return false;
   return ctx.g.edges.some((e) => {
     if (e.kind !== 'msg' || e.to !== nodeId || !e.fromPool) return false;
-    const fi = poolIndex.get(e.fromPool);
+    const fi = ctx.pools.indexOf(e.fromPool);
     return fi !== undefined && fi > ni;
   });
 }
@@ -1388,24 +1384,17 @@ function adjacentPoolGap(ctx: Ctx, u: Cell, v: Cell): number | undefined {
 }
 
 function poolPairIndices(ctx: Ctx, u: Cell, v: Cell): [number, number] | undefined {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const ui = poolIndex.get(lanePool.get(u.lane)!);
-  const vi = poolIndex.get(lanePool.get(v.lane)!);
+  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
+  const vi = ctx.pools.indexOf(ctx.pools.poolOfLane(v.lane));
   return ui !== undefined && vi !== undefined ? [ui, vi] : undefined;
 }
 
 /** 通信が多い側と反対の外周へ、同一行の迂回分岐を置く。 */
 function alternativeBelow(ctx: Ctx, u: Cell): boolean {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const ownPool = lanePool.get(u.lane);
-  const ownIndex = ownPool === undefined ? undefined : poolIndex.get(ownPool);
+  const ownPool = ctx.pools.poolOfLane(u.lane);
+  const ownIndex = ctx.pools.indexOf(ownPool);
   if (ownIndex === undefined) return true;
-  const nodePool = (id: string) => {
-    const n = ctx.nodeById.get(id);
-    return n ? lanePool.get(n.lane) : undefined;
-  };
+  const nodePool = (id: string) => ctx.pools.poolOfNode(id);
   let above = 0;
   let below = 0;
   for (const e of ctx.g.edges) {
@@ -1414,7 +1403,7 @@ function alternativeBelow(ctx: Ctx, u: Cell): boolean {
     const toPool = e.toPool ?? nodePool(e.to);
     if (fromPool !== ownPool && toPool !== ownPool) continue;
     const other = fromPool === ownPool ? toPool : fromPool;
-    const oi = other === undefined ? undefined : poolIndex.get(other);
+    const oi = ctx.pools.indexOf(other);
     if (oi === undefined) continue;
     if (oi < ownIndex) above++;
     if (oi > ownIndex) below++;
@@ -1427,9 +1416,7 @@ function alternativeBelow(ctx: Ctx, u: Cell): boolean {
  * 参加者内部の行チャネルを横幹線にせず、境界直後の無意味な小折れも作らない。
  */
 function planAcrossPoolGap(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gap: number): EdgePlan {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const ui = poolIndex.get(lanePool.get(u.lane)!)!;
+  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane))!;
   const down = ui === gap;
   const gapPos = ctx.globalPoolGap.get(gap)!;
   const gU = ctx.globalRow.get(rowKey(u.lane, u.row))!;
@@ -1619,9 +1606,7 @@ function planIntoBoundary(
   const gap = adjacentPoolGap(ctx, u, v);
   const pair = poolPairIndices(ctx, u, v);
   if (gap === undefined && pair && pair[0] !== pair[1]) return undefined; // 非隣接プールは既存経路に任せる
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const down = gap !== undefined ? poolIndex.get(lanePool.get(u.lane)!) === gap : gU < gV;
+  const down = gap !== undefined ? ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane)) === gap : gU < gV;
   const gx = v.col + 1;
 
   // 送信元の面から円へ真っ直ぐ入る Z 形。送信元がタスクなら同じ面の他の通信とスロット分離される。

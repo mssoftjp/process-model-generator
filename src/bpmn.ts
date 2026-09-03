@@ -6,6 +6,7 @@ import type {
   ActivityLoop, Diagnostic, EventTrigger, Ir, IrNode, NodeKind,
 } from './types.ts';
 import { isDocLike } from './types.ts';
+import { buildPoolIndex } from './pools.ts';
 
 export type EventSlot = 'start' | 'catch' | 'throw' | 'boundary' | 'end';
 
@@ -348,11 +349,7 @@ export function legalEvent(slot: EventSlot, trigger: EventTrigger, interrupting?
 export function validateIr(ir: Ir): Diagnostic[] {
   const out: Diagnostic[] = [];
   const byId = new Map(ir.nodes.map((n) => [n.id, n]));
-  const lanePool = new Map(ir.lanes.map((lane) => [lane.id, lane.pool]));
-  const poolOfNode = (id: string): string | undefined => {
-    const node = byId.get(id);
-    return node ? lanePool.get(node.lane) : undefined;
-  };
+  const poolOfNode = buildPoolIndex(ir).poolOfNode;
 
   // レーンは工程の置き場所ではなく役割。同じプールで「役割（工程）」だけを増やす
   // 典型的な疑似レーンを、言語に依存しない表示名の構造でレビュー対象にする。

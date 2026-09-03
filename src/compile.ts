@@ -2,6 +2,7 @@
 // 同じテキストと同じオプションは同じ絵(C-82)。乱数・時刻・環境計測をどこにも持たない。
 
 import { applyStrictSemantics } from './bpmn.ts';
+import { buildPoolIndex } from './pools.ts';
 import { boundaryTopEvents, crossMinusLabelEvents } from './message-labels.ts';
 import { parse } from './parse.ts';
 import { normalize } from './normalize.ts';
@@ -137,9 +138,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   // 不変条件の安全網: DFS 後退辺の対象は祖先なので、列は必ず手前になるはず。
   // プールをまたぐ辺は対象外(各プールの時間軸は独立で、S-15 の時系列整列は
   // 受信側の列だけを送信側以降へ動かすため、プール間の関連は前後どちらにもなり得る)。
-  const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
-  const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
-  const poolOfNode = (id: string) => poolOfLane.get(laneOfNode.get(id) ?? '');
+  const poolOfNode = buildPoolIndex(normalized).poolOfNode;
   // 文書類は状態であり時間軸を進めない(S-73)。書き手の列へ戻す配置(S-13)があるため、
   // 文書類を端点に持つ戻り辺は列の前後関係を約束しない。
   const kindOf = new Map(normalized.nodes.map((n) => [n.id, n.kind]));
@@ -193,6 +192,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     geometry,
     normalized,
     diagnostics: diags,
+    plan: selected.assembled.plan,
   };
 }
 

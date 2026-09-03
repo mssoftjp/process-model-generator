@@ -2,8 +2,6 @@
 // 内部交差の判定は wire.segmentInteriorCrossing と同一（端点タッチは接続）。
 
 import { inspectEdgeLabels, edgeLabelBox } from './edge-labels.ts';
-import { place } from './place.ts';
-import { route } from './route.ts';
 import type { CompileResult, EdgeGeom, Geometry, Pt, RoutePlan } from './types.ts';
 import { segmentInteriorCrossing } from './wire.ts';
 
@@ -52,9 +50,10 @@ interface Interval {
   end: number;
 }
 
+/** 採用された経路計画。compile が返す plan をそのまま返す(以前は place と route を再実行して復元していたが、
+ *  精錬(improveRouting)の追加オプションを知らないため実際の描画と食い違い得た)。 */
 export function recoverSelectedRoute(result: CompileResult): RoutePlan {
-  const improved = result.diagnostics.some((d) => d.code === 'N-431');
-  return route(result.normalized, place(result.normalized), improved);
+  return result.plan;
 }
 
 export function allocatedTrackDensity(plan: RoutePlan): number {
