@@ -707,6 +707,28 @@ function hasTopTaskIcon(n) {
 }
 
 // src/message-labels.ts
+function boundaryTopEvents(g) {
+  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const idxOfNode = (id) => {
+    const n = nodeById.get(id);
+    return n ? poolIndex.get(poolOfLane.get(n.lane) ?? "") : void 0;
+  };
+  const out = /* @__PURE__ */ new Set();
+  for (const n of g.nodes) {
+    if (!isAttachedBoundary(n)) continue;
+    const own = poolIndex.get(poolOfLane.get(n.lane) ?? "");
+    if (own === void 0) continue;
+    const fromAbove = g.edges.some((e) => {
+      if (e.kind !== "msg" || e.to !== n.id) return false;
+      const from = e.fromPool ? poolIndex.get(e.fromPool) : idxOfNode(e.from);
+      return from !== void 0 && from < own;
+    });
+    if (fromAbove) out.add(n.id);
+  }
+  return out;
+}
 function crossMinusLabelEvents(g) {
   const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
   const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
@@ -1713,23 +1735,44 @@ var OUT_LABEL_FONT = 12;
 var OUT_LABEL_LINE_H = 16;
 var OUT_LABEL_MAX_W = 152;
 var OUT_LABEL_GAP = 6;
-function boundaryHang(n) {
+var BOUNDARY_LABEL_CLEAR = 8;
+function boundaryExtent(n, orientation) {
   const lines = n.label === "" ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
-  return EVENT_R + (lines.length ? lines.length * OUT_LABEL_LINE_H + OUT_LABEL_GAP : 4);
+  if (lines.length === 0) return { hang: EVENT_R + 4, reach: EVENT_R, shift: 0 };
+  const labelW = Math.max(0, ...lines.map((l) => measureText(l, OUT_LABEL_FONT)));
+  const labelH = lines.length * OUT_LABEL_LINE_H;
+  const along = orientation === "vertical" ? labelH : labelW;
+  const across = orientation === "vertical" ? labelW : labelH;
+  return {
+    hang: Math.max(EVENT_R + 4, BOUNDARY_LABEL_CLEAR + across),
+    reach: EVENT_R + OUT_LABEL_GAP + along,
+    shift: BOUNDARY_LABEL_CLEAR + across / 2
+  };
 }
-function measureNodes(nodes, labelCrossMinus = /* @__PURE__ */ new Set(), orientation = "horizontal") {
+function measureNodes(nodes, labelCrossMinus = /* @__PURE__ */ new Set(), orientation = "horizontal", boundaryTop = /* @__PURE__ */ new Set()) {
   const hanging = /* @__PURE__ */ new Map();
   for (const n of nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo) continue;
-    hanging.set(n.attachedTo, Math.max(hanging.get(n.attachedTo) ?? 0, boundaryHang(n)));
+    const h = hanging.get(n.attachedTo) ?? { minus: 0, plus: 0, reach: 0 };
+    const ext = boundaryExtent(n, orientation);
+    if (boundaryTop.has(n.id)) h.minus = Math.max(h.minus, ext.hang);
+    else h.plus = Math.max(h.plus, ext.hang);
+    h.reach = Math.max(h.reach, ext.reach);
+    hanging.set(n.attachedTo, h);
   }
   const cells2 = /* @__PURE__ */ new Map();
   for (const n of nodes) {
-    cells2.set(n.id, measureNode(n, labelCrossMinus.has(n.id), orientation, hanging.get(n.id) ?? 0));
+    const cell = measureNode(n, labelCrossMinus.has(n.id), orientation, hanging.get(n.id));
+    if (isAttachedBoundary(n)) {
+      cell.labelSide = orientation === "vertical" ? "bottom" : "right";
+      const { shift } = boundaryExtent(n, orientation);
+      cell.labelShift = boundaryTop.has(n.id) ? -shift : shift;
+    }
+    cells2.set(n.id, cell);
   }
   return cells2;
 }
-function measureNode(n, labelCrossMinus, orientation, hang = 0) {
+function measureNode(n, labelCrossMinus, orientation, hang) {
   if (n.kind === "task") {
     const lines2 = wrapText(n.label, TASK_MAX_TEXT_W, FONT_SIZE);
     const textW = Math.max(0, ...lines2.map((l) => measureText(l, FONT_SIZE)));
@@ -1741,9 +1784,16 @@ function measureNode(n, labelCrossMinus, orientation, hang = 0) {
     let bottomExt = shapeH / 2;
     let leftExt = shapeW / 2;
     let rightExt = shapeW / 2;
-    if (hang > 0) {
-      if (orientation === "vertical") rightExt += hang;
-      else bottomExt += hang;
+    if (hang) {
+      if (orientation === "vertical") {
+        rightExt += hang.plus;
+        leftExt += hang.minus;
+        bottomExt = Math.max(bottomExt, shapeH / 2 + hang.reach);
+      } else {
+        bottomExt += hang.plus;
+        topExt += hang.minus;
+        rightExt = Math.max(rightExt, shapeW / 2 + hang.reach);
+      }
     }
     return {
       id: n.id,
@@ -2292,6 +2342,7 @@ function route(g, p, optimizeReadability = false, options) {
     rowRuns: /* @__PURE__ */ new Map(),
     stubRuns: /* @__PURE__ */ new Map(),
     labelCrossMinus: crossMinusLabelEvents(g),
+    boundaryTop: boundaryTopEvents(g),
     planned: /* @__PURE__ */ new Map(),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? /* @__PURE__ */ new Set()
@@ -3347,12 +3398,80 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
 }
 function planIntoBoundary(ctx, e, u, v, gU, gV) {
   if (isAttachedBoundary(u.node)) return void 0;
+  const hostId = v.node.attachedTo;
+  const onTop = ctx.boundaryTop.has(v.node.id);
+  const toSide = onTop ? "top" : "bottom";
+  const gap = adjacentPoolGap(ctx, u, v);
+  const pair = poolPairIndices(ctx, u, v);
+  if (gap === void 0 && pair && pair[0] !== pair[1]) return void 0;
+  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
+  const down = gap !== void 0 ? poolIndex.get(lanePool.get(u.lane)) === gap : gU < gV;
   const gx = v.col + 1;
-  const stubY = portStubY(e.to, "bottom", boundaryHang(v.node) - EVENT_R + 8);
+  const straightIn = () => {
+    if (down !== onTop) return void 0;
+    if (isGw(u.node)) return void 0;
+    const fromSide = down ? "bottom" : "top";
+    if (down) {
+      if (!(bottomFree(u.node) || eventLabelMovedUp(ctx, u.node.id))) return void 0;
+    } else {
+      if (!topFree(ctx, u) && !(u.node.kind === "task" && topUsersSlottable(ctx, u))) return void 0;
+      if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return void 0;
+    }
+    const shareU = u.node.kind === "task" ? u.node.id : void 0;
+    if (shareU === void 0 && !faceQuiet(ctx, u.node.id, fromSide, e)) return void 0;
+    const returnExitsFace = ctx.g.edges.some((o) => {
+      if (o.from !== u.node.id || o.kind !== "seq" || !o.isReturn) return false;
+      const done = ctx.planned.get(o.id);
+      return done ? done.fromSide === fromSide : true;
+    });
+    if (returnExitsFace) return void 0;
+    if (gap !== void 0) {
+      const gapPos = ctx.globalPoolGap.get(gap);
+      if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return void 0;
+      if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, hostId)) return void 0;
+      reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
+      reserveColRun(ctx, v.col, gapPos, gV, e, e.from, hostId);
+      const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
+      return {
+        edgeId: e.id,
+        fromSide,
+        toSide,
+        pattern: "channel-approach",
+        points: [
+          { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+          { x: nodeCX(e.from), y: poolChannelY(gap, run) },
+          { x: nodeCX(e.to), y: poolChannelY(gap, run) },
+          { x: nodeCX(e.to), y: portY(e.to, toSide) }
+        ]
+      };
+    }
+    if (!down) return void 0;
+    const chPos2 = ctx.globalChannel.get(rowKey(v.lane, v.row));
+    if (!(gU < chPos2)) return void 0;
+    if (!canReserveColRun(ctx, u.col, gU, chPos2, e.from, e.to, shareU)) return void 0;
+    reserveColRun(ctx, u.col, gU, chPos2, e, e.from, shareU);
+    const tCh2 = allocChannel(ctx, v.lane, v.row, u.col, v.col, "above", gU, u.col);
+    return {
+      edgeId: e.id,
+      fromSide,
+      toSide,
+      pattern: "channel-approach",
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh2) },
+        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh2) },
+        { x: nodeCX(e.to), y: portY(e.to, toSide) }
+      ]
+    };
+  };
+  const z = straightIn();
+  if (z) return z;
+  const stubY = portStubY(e.to, toSide);
   const tail = (dstX) => [
     { x: dstX, y: stubY },
     { x: nodeCX(e.to), y: stubY },
-    { x: nodeCX(e.to), y: portY(e.to, "bottom") }
+    { x: nodeCX(e.to), y: portY(e.to, toSide) }
   ];
   const pickSource = (yOffset) => {
     const right = { side: "right", g: u.col + 1 };
@@ -3361,11 +3480,7 @@ function planIntoBoundary(ctx, e, u, v, gU, gV) {
     if (reserveStubRun(ctx, u.lane, u.row, yOffset, gutterScale(left.g), u.col, e)) return left;
     return right;
   };
-  const gap = adjacentPoolGap(ctx, u, v);
   if (gap !== void 0) {
-    const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-    const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-    const down = poolIndex.get(lanePool.get(u.lane)) === gap;
     const gapPos = ctx.globalPoolGap.get(gap);
     const srcYOffset = down ? 8 : -8;
     const src2 = pickSource(srcYOffset);
@@ -3375,7 +3490,7 @@ function planIntoBoundary(ctx, e, u, v, gU, gV) {
     return {
       edgeId: e.id,
       fromSide: src2.side,
-      toSide: "bottom",
+      toSide,
       pattern: "channel-approach",
       points: [
         { x: portX(e.from, src2.side), y: nodeCY(e.from, srcYOffset) },
@@ -3386,8 +3501,6 @@ function planIntoBoundary(ctx, e, u, v, gU, gV) {
       ]
     };
   }
-  const pair = poolPairIndices(ctx, u, v);
-  if (pair && pair[0] !== pair[1]) return void 0;
   const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row));
   const src = pickSource(fallbackOffset(e));
   const srcY = nodeCY(e.from, fallbackOffset(e));
@@ -3406,7 +3519,7 @@ function planIntoBoundary(ctx, e, u, v, gU, gV) {
   return {
     edgeId: e.id,
     fromSide: src.side,
-    toSide: "bottom",
+    toSide,
     pattern: "channel-approach",
     points: [
       { x: portX(e.from, src.side), y: srcY },
@@ -4102,6 +4215,7 @@ function computeCoords(g, p, cells2, rp, includeTitle = true) {
       provisional: n.provisional,
       synthetic: n.synthetic,
       labelSide: cell.labelSide,
+      labelShift: cell.labelShift,
       eventThrow: n.eventThrow,
       interrupting: n.interrupting,
       attachedTo: n.attachedTo,
@@ -4132,21 +4246,22 @@ function computeCoords(g, p, cells2, rp, includeTitle = true) {
   return { colCenterX, gutterX: gutterX2, rowMid, channelY: channelY2, poolChannelY: poolChannelY2, nodeGeom, lanes, poolGeoms, width, height, bandRight, headerW: totalHeader, titleH, portPt };
 }
 function overlayBoundaryEvents(g, nodeGeom) {
+  const top = boundaryTopEvents(g);
   const groups = /* @__PURE__ */ new Map();
   for (const n of g.nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo || !nodeGeom.has(n.attachedTo)) continue;
-    const list = groups.get(n.attachedTo) ?? [];
-    list.push(n.id);
-    groups.set(n.attachedTo, list);
+    const group2 = groups.get(n.attachedTo) ?? { top: [], bottom: [] };
+    (top.has(n.id) ? group2.top : group2.bottom).push(n.id);
+    groups.set(n.attachedTo, group2);
   }
-  for (const [hostId, ids] of groups) {
+  for (const [hostId, group2] of groups) {
     const host = nodeGeom.get(hostId);
     const r = EVENT_R;
-    ids.forEach((id, i) => {
+    const place2 = (ids, onTop) => ids.forEach((id, i) => {
       const ng = nodeGeom.get(id);
       if (!ng) return;
       const cx = host.x + host.w * (0.5 + (i + 1) / (2 * (ids.length + 1)));
-      const cy = host.y + host.h;
+      const cy = onTop ? host.y : host.y + host.h;
       ng.cx = cx;
       ng.cy = cy;
       ng.w = r * 2;
@@ -4154,6 +4269,8 @@ function overlayBoundaryEvents(g, nodeGeom) {
       ng.x = cx - r;
       ng.y = cy - r;
     });
+    place2(group2.top, true);
+    place2(group2.bottom, false);
   }
 }
 
@@ -4586,11 +4703,11 @@ function nodeObstacles(n) {
   } else if (n.labelSide === "left") {
     out.push({ x: n.x - 6 - labelW, y: n.cy - labelH / 2, w: labelW, h: labelH });
   } else if (n.labelSide === "right") {
-    out.push({ x: n.x + n.w + 6, y: n.cy - labelH / 2, w: labelW, h: labelH });
+    out.push({ x: n.x + n.w + 6, y: n.cy + (n.labelShift ?? 0) - labelH / 2, w: labelW, h: labelH });
   } else if (n.labelSide === "top") {
     out.push({ x: n.cx - labelW / 2, y: n.y - 6 - labelH, w: labelW, h: labelH });
   } else {
-    out.push({ x: n.cx - labelW / 2, y: n.y + n.h + 6, w: labelW, h: labelH });
+    out.push({ x: n.cx + (n.labelShift ?? 0) - labelW / 2, y: n.y + n.h + 6, w: labelW, h: labelH });
   }
   return out;
 }
@@ -6495,7 +6612,7 @@ function renderNode(n) {
   if (n.labelSide === "left" || n.labelSide === "right") {
     const lx = n.labelSide === "left" ? n.x - 6 : n.x + n.w + 6;
     n.labelLines.forEach((line, i) => {
-      const y = n.cy - totalH / 2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
+      const y = n.cy + (n.labelShift ?? 0) - totalH / 2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
       out.push(text(line, lx, y, OUT_LABEL_FONT, C.subText, n.labelSide === "left" ? "end" : "start", 400, true, true));
     });
     return out.join("\n");
@@ -6675,7 +6792,7 @@ function compile(source, opts = {}) {
   const orientation = normalized.orientation ?? opts.orientation ?? "horizontal";
   const vertical = orientation === "vertical";
   const labelCrossMinus = crossMinusLabelEvents(normalized);
-  const cells2 = measureNodes(normalized.nodes, labelCrossMinus, orientation);
+  const cells2 = measureNodes(normalized.nodes, labelCrossMinus, orientation, boundaryTopEvents(normalized));
   const placement = place(normalized);
   const cellsL = vertical ? transposeCells(cells2) : cells2;
   const titleShift = vertical && normalized.title ? TITLE_H : 0;

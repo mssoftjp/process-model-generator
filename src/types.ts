@@ -151,6 +151,7 @@ export interface NodeCell {
   // イベント外置きラベルの実配置面。テキストは回転しないので向きごとに空き面が違う:
   // 横図はポートが左右 → ラベルは下(既定)/上、縦図はポートが上下 → ラベルは右(既定)/左
   labelSide?: 'top' | 'bottom' | 'left' | 'right';
+  labelShift?: number; // 横ラベルなら y、上下ラベルなら x の平行移動(境界イベント: 出る線を避ける)
 }
 
 // ---- P2 表配置 ----
@@ -246,6 +247,7 @@ export interface NodeGeom {
   provisional: boolean;
   synthetic: boolean;
   labelSide?: 'top' | 'bottom' | 'left' | 'right';
+  labelShift?: number; // 横ラベルなら y、上下ラベルなら x の平行移動(境界イベント: 出る線を避ける)
   eventThrow?: boolean;
   interrupting?: boolean;
   attachedTo?: string;

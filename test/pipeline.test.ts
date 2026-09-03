@@ -1891,6 +1891,73 @@ send ~> alert`;
     const msg = r.geometry.edges.find((e) => e.kind === 'msg')!;
     const from = r.geometry.nodes.find((n) => n.id === 'send')!;
     expect(msg.points.at(-1)!.x).toBeGreaterThanOrEqual(from.x); // 時間を遡らない
+    // 上のプールから届くので境界イベントは対象の上辺に掛かり、メッセージは上から真っ直ぐ入る(S-53)
+    const alert = r.geometry.nodes.find((n) => n.id === 'alert')!;
+    const work = r.geometry.nodes.find((n) => n.id === 'work')!;
+    expect(alert.cy).toBe(work.y);
+    expect(alert.cx).toBeGreaterThan(work.cx);
+    expect(msg.points.at(-1)!.y).toBe(alert.y);
+    expect(msg.points[0]!.y).toBe(from.y + from.h);
+    expect(msg.points.length).toBeLessThanOrEqual(4);
+    // ラベルは円の右、出るシーケンスの線(中心線)から Activity の外側へ離す
+    expect(alert.labelSide).toBe('right');
+    expect(alert.labelShift).toBeLessThan(0);
+  });
+
+  it('下のプールから届く境界イベントは下辺に掛かり、下から真っ直ぐ入る', () => {
+    const src = `pool P1[A]
+lane L1[L1]
+ start s1
+ task work[作業]
+ boundary(message) alert[中断] @work
+ task fix[対応]
+ s1 -> work
+ alert -> fix
+pool P2[B]
+lane L2[L2]
+ start s2
+ task a1[準備]
+ task(send) send[通知]
+ s2 -> a1
+ a1 -> send
+send ~> alert`;
+    const r = noOracleViolations(src);
+    const alert = r.geometry.nodes.find((n) => n.id === 'alert')!;
+    const work = r.geometry.nodes.find((n) => n.id === 'work')!;
+    const from = r.geometry.nodes.find((n) => n.id === 'send')!;
+    const msg = r.geometry.edges.find((e) => e.kind === 'msg')!;
+    expect(alert.cy).toBe(work.y + work.h);
+    expect(msg.points.at(-1)!.y).toBe(alert.y + alert.h);
+    expect(msg.points[0]!.y).toBe(from.y);
+    expect(msg.points.length).toBeLessThanOrEqual(4);
+    expect(alert.labelShift).toBeGreaterThan(0);
+    // 出るシーケンスの線はラベルの箱を通らない
+    const seq = r.geometry.edges.find((e) => e.id.includes('alert_fix'))!;
+    const labelTop = alert.cy + alert.labelShift! - 8;
+    expect(seq.points[0]!.y).toBeLessThan(labelTop);
+  });
+
+  it('縦図でも上辺(実左)の境界イベントへ横から真っ直ぐ入る', () => {
+    const src = `orientation vertical
+pool P1[A]
+lane L1[L1]
+ start s1
+ task(send) send[通知]
+ s1 -> send
+pool P2[B]
+lane L2[L2]
+ start s2
+ task work[作業]
+ boundary(message) alert[中断] @work
+ s2 -> work
+send ~> alert`;
+    const r = noOracleViolations(src);
+    const alert = r.geometry.nodes.find((n) => n.id === 'alert')!;
+    const work = r.geometry.nodes.find((n) => n.id === 'work')!;
+    const msg = r.geometry.edges.find((e) => e.kind === 'msg')!;
+    expect(alert.cx).toBe(work.x);
+    expect(msg.points.at(-1)!.x).toBe(alert.x);
+    expect(alert.labelSide).toBe('bottom');
   });
 });
 

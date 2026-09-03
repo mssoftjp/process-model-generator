@@ -28,13 +28,13 @@
 //     溝で終わる長いスタブは予約しても可読性で劣るため導入しない
 
 import { isAttachedBoundary, isEventKind, isGatewayKind } from './bpmn.ts';
-import { crossMinusLabelEvents } from './message-labels.ts';
+import { boundaryTopEvents, crossMinusLabelEvents } from './message-labels.ts';
 import { isDocLike } from './types.ts';
 import type {
   EdgePlan, GutterSide, NormEdge, NormGraph, NormNode, Placement, PortSide, RoutePlan, SymX, SymY,
 } from './types.ts';
 import { EDGE_FONT_SIZE, measureText } from './metrics.ts';
-import { boundaryHang, EVENT_R } from './measure.ts';
+import { EVENT_R } from './measure.ts';
 
 interface Ctx {
   g: NormGraph;
@@ -72,6 +72,7 @@ interface Ctx {
   // 重なる。離散区間では端点接触なので、この登録だけ端点を含めて衝突とみなす。
   stubRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
   labelCrossMinus: ReadonlySet<string>; // ラベルを交差軸マイナス側へ逃がしたイベント(P1 と同じ集合)
+  boundaryTop: ReadonlySet<string>; // 対象 Activity の上辺に掛ける境界イベント(P1/P4 と同じ集合、S-53)
   planned: Map<string, EdgePlan>; // 宣言順で先に計画した辺(入口面の静的参照に使う)
   optimizeReadability: boolean;
   poolExteriorGutter?: number;
@@ -119,6 +120,7 @@ export function route(
     rowRuns: new Map(),
     stubRuns: new Map(),
     labelCrossMinus: crossMinusLabelEvents(g),
+    boundaryTop: boundaryTopEvents(g),
     planned: new Map(),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? new Set(),
@@ -1481,21 +1483,91 @@ function planAcrossPoolGapZ(
 }
 
 /**
- * 境界イベント宛メッセージ(C-53)。境界イベントは対象 Activity の下辺に掛かる円なので、
- * 下辺スタブ(円の 16px 下)から真上に入る。対象列の右溝を縦回廊に使い、隣接プールなら
- * プール間回廊、同一プールなら対象行の上チャネルで水平移動する。非隣接プールは対象外。
+ * 境界イベント宛メッセージ(C-53 / S-53)。境界イベントは対象 Activity の辺に掛かる円で、
+ * 上のプールから届くものは上辺、それ以外は下辺に置かれる(boundaryTopEvents)。
+ * 送信元がその辺の側にあれば、送信元の面から回廊(隣接プール)または対象行の上チャネル
+ * (同一プール)を経て円へ真っ直ぐ入る Z 形。そうでなければ対象列の右溝を縦回廊にして
+ * 円の外側のスタブから入る。非隣接プールは対象外。
  */
 function planIntoBoundary(
   ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number, gV: number,
 ): EdgePlan | undefined {
   if (isAttachedBoundary(u.node)) return undefined;
+  const hostId = v.node.attachedTo!;
+  const onTop = ctx.boundaryTop.has(v.node.id);
+  const toSide: PortSide = onTop ? 'top' : 'bottom';
+  const gap = adjacentPoolGap(ctx, u, v);
+  const pair = poolPairIndices(ctx, u, v);
+  if (gap === undefined && pair && pair[0] !== pair[1]) return undefined; // 非隣接プールは既存経路に任せる
+  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
+  const down = gap !== undefined ? poolIndex.get(lanePool.get(u.lane)!) === gap : gU < gV;
   const gx = v.col + 1;
-  // スタブは円の下の外置きラベルを跨いだ先(張り出し量 + 8px)。ラベルを線が横切らない
-  const stubY = portStubY(e.to, 'bottom', boundaryHang(v.node) - EVENT_R + 8);
+
+  // 送信元の面から円へ真っ直ぐ入る Z 形。送信元がタスクなら同じ面の他の通信とスロット分離される。
+  // 受信側の縦線は円の x(対象の右半分)にあり対象中心の縦線とは物理的に離れるので、
+  // 対象の面に着く走行とは共有できる(shareFace = 対象)。
+  const straightIn = (): EdgePlan | undefined => {
+    if (down !== onTop) return undefined;
+    if (isGw(u.node)) return undefined;
+    const fromSide: PortSide = down ? 'bottom' : 'top';
+    if (down) {
+      if (!(bottomFree(u.node) || eventLabelMovedUp(ctx, u.node.id))) return undefined;
+    } else {
+      if (!topFree(ctx, u) && !(u.node.kind === 'task' && topUsersSlottable(ctx, u))) return undefined;
+      if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return undefined;
+    }
+    const shareU = u.node.kind === 'task' ? u.node.id : undefined;
+    if (shareU === undefined && !faceQuiet(ctx, u.node.id, fromSide, e)) return undefined;
+    const returnExitsFace = ctx.g.edges.some((o) => {
+      if (o.from !== u.node.id || o.kind !== 'seq' || !o.isReturn) return false;
+      const done = ctx.planned.get(o.id);
+      return done ? done.fromSide === fromSide : true;
+    });
+    if (returnExitsFace) return undefined;
+    if (gap !== undefined) {
+      const gapPos = ctx.globalPoolGap.get(gap)!;
+      if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return undefined;
+      if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, hostId)) return undefined;
+      reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
+      reserveColRun(ctx, v.col, gapPos, gV, e, e.from, hostId);
+      const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
+      return {
+        edgeId: e.id, fromSide, toSide, pattern: 'channel-approach',
+        points: [
+          { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+          { x: nodeCX(e.from), y: poolChannelY(gap, run) },
+          { x: nodeCX(e.to), y: poolChannelY(gap, run) },
+          { x: nodeCX(e.to), y: portY(e.to, toSide) },
+        ],
+      };
+    }
+    // 同一プール: 送信元が上の行にあるときだけ、対象行の上チャネルから上辺の円へ降りる
+    if (!down) return undefined;
+    const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
+    if (!(gU < chPos)) return undefined;
+    if (!canReserveColRun(ctx, u.col, gU, chPos, e.from, e.to, shareU)) return undefined;
+    reserveColRun(ctx, u.col, gU, chPos, e, e.from, shareU);
+    const tCh = allocChannel(ctx, v.lane, v.row, u.col, v.col, 'above', gU, u.col);
+    return {
+      edgeId: e.id, fromSide, toSide, pattern: 'channel-approach',
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.from), y: channelY(v.lane, v.row, tCh) },
+        { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh) },
+        { x: nodeCX(e.to), y: portY(e.to, toSide) },
+      ],
+    };
+  };
+  const z = straightIn();
+  if (z) return z;
+
+  // 対象列の右溝を縦回廊にし、円の外側のスタブ(ラベルは円の横なので跨がない)から入る
+  const stubY = portStubY(e.to, toSide);
   const tail = (dstX: SymX) => [
     { x: dstX, y: stubY },
     { x: nodeCX(e.to), y: stubY },
-    { x: nodeCX(e.to), y: portY(e.to, 'bottom') },
+    { x: nodeCX(e.to), y: portY(e.to, toSide) },
   ];
   // 送信側の側面スタブ: 右溝が同じ行の隣のスタブと衝突するなら左溝から出る(S-57 と同じ)
   const pickSource = (yOffset: number): { side: PortSide; g: number } => {
@@ -1505,11 +1577,7 @@ function planIntoBoundary(
     if (reserveStubRun(ctx, u.lane, u.row, yOffset, gutterScale(left.g), u.col, e)) return left;
     return right;
   };
-  const gap = adjacentPoolGap(ctx, u, v);
   if (gap !== undefined) {
-    const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-    const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-    const down = poolIndex.get(lanePool.get(u.lane)!) === gap;
     const gapPos = ctx.globalPoolGap.get(gap)!;
     const srcYOffset = down ? 8 : -8;
     const src = pickSource(srcYOffset);
@@ -1517,7 +1585,7 @@ function planIntoBoundary(
     const dstRun = allocGutter(ctx, gx, 'entry', gapPos, gV);
     const run = allocPoolGap(ctx, gap, down ? gutterScale(src.g) : gutterScale(gx), down ? gutterScale(gx) : gutterScale(src.g));
     return {
-      edgeId: e.id, fromSide: src.side, toSide: 'bottom', pattern: 'channel-approach',
+      edgeId: e.id, fromSide: src.side, toSide, pattern: 'channel-approach',
       points: [
         { x: portX(e.from, src.side), y: nodeCY(e.from, srcYOffset) },
         { x: gutterX(src.g, 'exit', srcRun), y: nodeCY(e.from, srcYOffset) },
@@ -1527,8 +1595,6 @@ function planIntoBoundary(
       ],
     };
   }
-  const pair = poolPairIndices(ctx, u, v);
-  if (pair && pair[0] !== pair[1]) return undefined; // 非隣接プールは既存経路に任せる
   const chPos = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
   const src = pickSource(fallbackOffset(e));
   const srcY = nodeCY(e.from, fallbackOffset(e));
@@ -1538,7 +1604,7 @@ function planIntoBoundary(
   );
   const r2 = allocGutter(ctx, gx, 'entry', chPos, gV);
   return {
-    edgeId: e.id, fromSide: src.side, toSide: 'bottom', pattern: 'channel-approach',
+    edgeId: e.id, fromSide: src.side, toSide, pattern: 'channel-approach',
     points: [
       { x: portX(e.from, src.side), y: srcY },
       { x: gutterX(src.g, 'exit', r1), y: srcY },

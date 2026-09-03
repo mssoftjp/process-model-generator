@@ -337,7 +337,7 @@ function renderNode(n: NodeGeom): string {
   if (n.labelSide === 'left' || n.labelSide === 'right') {
     const lx = n.labelSide === 'left' ? n.x - 6 : n.x + n.w + 6;
     n.labelLines.forEach((line, i) => {
-      const y = n.cy - totalH / 2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
+      const y = n.cy + (n.labelShift ?? 0) - totalH / 2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
       out.push(text(line, lx, y, OUT_LABEL_FONT, C.subText, n.labelSide === 'left' ? 'end' : 'start', 400, true, true));
     });
     return out.join('\n');

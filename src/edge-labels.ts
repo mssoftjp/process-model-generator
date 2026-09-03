@@ -183,11 +183,11 @@ function nodeObstacles(n: NodeGeom): Box[] {
   } else if (n.labelSide === 'left') {
     out.push({ x: n.x - 6 - labelW, y: n.cy - labelH / 2, w: labelW, h: labelH });
   } else if (n.labelSide === 'right') {
-    out.push({ x: n.x + n.w + 6, y: n.cy - labelH / 2, w: labelW, h: labelH });
+    out.push({ x: n.x + n.w + 6, y: n.cy + (n.labelShift ?? 0) - labelH / 2, w: labelW, h: labelH });
   } else if (n.labelSide === 'top') {
     out.push({ x: n.cx - labelW / 2, y: n.y - 6 - labelH, w: labelW, h: labelH });
   } else {
-    out.push({ x: n.cx - labelW / 2, y: n.y + n.h + 6, w: labelW, h: labelH });
+    out.push({ x: n.cx + (n.labelShift ?? 0) - labelW / 2, y: n.y + n.h + 6, w: labelW, h: labelH });
   }
   return out;
 }

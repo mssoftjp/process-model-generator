@@ -21,35 +21,74 @@ export const OUT_LABEL_LINE_H = 16;
 export const OUT_LABEL_MAX_W = 152;
 export const OUT_LABEL_GAP = 6;
 
+/** 境界イベントのラベルを、円の中心線(出るシーケンスの線)から外側へ離す量。 */
+const BOUNDARY_LABEL_CLEAR = 8;
+
+/**
+ * 境界イベントの張り出し。円は辺から半径 + 余白、ラベルは円の主軸プラス側(横図=右)に
+ * 置き、交差軸では中心線から BOUNDARY_LABEL_CLEAR だけ Activity の外側へ寄せる
+ * (中心線は境界イベントから出るシーケンスの線なので、ラベルを横切らない)。
+ * hang = 交差軸の張り出し、reach = 主軸プラス側へラベルが届く距離(円の中心から)。
+ */
+function boundaryExtent(n: NormNode, orientation: Orientation): { hang: number; reach: number; shift: number } {
+  const lines = n.label === '' ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
+  if (lines.length === 0) return { hang: EVENT_R + 4, reach: EVENT_R, shift: 0 };
+  const labelW = Math.max(0, ...lines.map((l) => measureText(l, OUT_LABEL_FONT)));
+  const labelH = lines.length * OUT_LABEL_LINE_H;
+  // 横図: ラベルは円の右、上下に寄せる。縦図: ラベルは円の下、左右に寄せる
+  const along = orientation === 'vertical' ? labelH : labelW;
+  const across = orientation === 'vertical' ? labelW : labelH;
+  return {
+    hang: Math.max(EVENT_R + 4, BOUNDARY_LABEL_CLEAR + across),
+    reach: EVENT_R + OUT_LABEL_GAP + along,
+    shift: BOUNDARY_LABEL_CLEAR + across / 2,
+  };
+}
+
+interface Hang {
+  minus: number; // 交差軸マイナス側(横図=上 / 縦図=左)へ掛かる境界イベントの張り出し
+  plus: number; // 交差軸プラス側(横図=下 / 縦図=右)へ掛かる境界イベントの張り出し
+  reach: number; // 主軸プラス側(横図=右 / 縦図=下)へ伸びるラベルの届く距離(Activity 中心から)
+}
+
 /**
  * labelCrossMinus: 交差軸マイナス側（横図=上 / 縦図=左）へラベルを逃がすイベントの集合。
+ * boundaryTop: 対象 Activity の上辺(交差軸マイナス側)に掛ける境界イベントの集合(S-53)。
  * 既定は交差軸プラス側（横図=下 / 縦図=右）。テキストは回転しないため、
  * 「使用ポートの反対側」という規則は向きごとに別の実面へ写る。
  */
-/** 境界イベントが対象 Activity の下辺から下へ張り出す量(円の半径 + 外置きラベル)。P3 の下辺スタブもこれを使う。 */
-export function boundaryHang(n: NormNode): number {
-  const lines = n.label === '' ? [] : wrapText(n.label, OUT_LABEL_MAX_W, OUT_LABEL_FONT);
-  return EVENT_R + (lines.length ? lines.length * OUT_LABEL_LINE_H + OUT_LABEL_GAP : 4);
-}
-
 export function measureNodes(
   nodes: NormNode[],
   labelCrossMinus = new Set<string>(),
   orientation: Orientation = 'horizontal',
+  boundaryTop = new Set<string>(),
 ): Map<string, NodeCell> {
-  const hanging = new Map<string, number>();
+  const hanging = new Map<string, Hang>();
   for (const n of nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo) continue;
-    hanging.set(n.attachedTo, Math.max(hanging.get(n.attachedTo) ?? 0, boundaryHang(n)));
+    const h = hanging.get(n.attachedTo) ?? { minus: 0, plus: 0, reach: 0 };
+    const ext = boundaryExtent(n, orientation);
+    if (boundaryTop.has(n.id)) h.minus = Math.max(h.minus, ext.hang);
+    else h.plus = Math.max(h.plus, ext.hang);
+    h.reach = Math.max(h.reach, ext.reach);
+    hanging.set(n.attachedTo, h);
   }
   const cells = new Map<string, NodeCell>();
   for (const n of nodes) {
-    cells.set(n.id, measureNode(n, labelCrossMinus.has(n.id), orientation, hanging.get(n.id) ?? 0));
+    const cell = measureNode(n, labelCrossMinus.has(n.id), orientation, hanging.get(n.id));
+    if (isAttachedBoundary(n)) {
+      // ラベルは円の横(主軸プラス側): 縦線が円へ真っ直ぐ入るときにラベルを横切らない。
+      // 交差軸では Activity の外側へ寄せ、円から出るシーケンスの線(中心線)を避ける
+      cell.labelSide = orientation === 'vertical' ? 'bottom' : 'right';
+      const { shift } = boundaryExtent(n, orientation);
+      cell.labelShift = boundaryTop.has(n.id) ? -shift : shift;
+    }
+    cells.set(n.id, cell);
   }
   return cells;
 }
 
-function measureNode(n: NormNode, labelCrossMinus: boolean, orientation: Orientation, hang = 0): NodeCell {
+function measureNode(n: NormNode, labelCrossMinus: boolean, orientation: Orientation, hang?: Hang): NodeCell {
   if (n.kind === 'task') {
     const lines = wrapText(n.label, TASK_MAX_TEXT_W, FONT_SIZE);
     const textW = Math.max(0, ...lines.map((l) => measureText(l, FONT_SIZE)));
@@ -61,9 +100,17 @@ function measureNode(n: NormNode, labelCrossMinus: boolean, orientation: Orienta
     let bottomExt = shapeH / 2;
     let leftExt = shapeW / 2;
     let rightExt = shapeW / 2;
-    if (hang > 0) {
-      if (orientation === 'vertical') rightExt += hang;
-      else bottomExt += hang;
+    if (hang) {
+      // 境界イベントの円は交差軸の両側へ、ラベルは主軸プラス側へ張り出す
+      if (orientation === 'vertical') {
+        rightExt += hang.plus;
+        leftExt += hang.minus;
+        bottomExt = Math.max(bottomExt, shapeH / 2 + hang.reach);
+      } else {
+        bottomExt += hang.plus;
+        topExt += hang.minus;
+        rightExt = Math.max(rightExt, shapeW / 2 + hang.reach);
+      }
     }
     return {
       id: n.id, shapeW, shapeH,

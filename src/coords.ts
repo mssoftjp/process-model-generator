@@ -11,6 +11,7 @@
 
 import { isAttachedBoundary } from './bpmn.ts';
 import { EVENT_R } from './measure.ts';
+import { boundaryTopEvents } from './message-labels.ts';
 import { GRID, measureText, quant } from './metrics.ts';
 import type { GutterSide, LaneGeom, NodeCell, NodeGeom, NormGraph, Placement, PoolGeom, PortSide, RoutePlan } from './types.ts';
 
@@ -251,6 +252,7 @@ export function computeCoords(
       x: cx - cell.shapeW / 2, y: cy - cell.shapeH / 2, w: cell.shapeW, h: cell.shapeH,
       cx, cy, onSpine: n.onSpine, provisional: n.provisional, synthetic: n.synthetic,
       labelSide: cell.labelSide,
+      labelShift: cell.labelShift,
       eventThrow: n.eventThrow, interrupting: n.interrupting, attachedTo: n.attachedTo,
       callProcess: n.callProcess, callTaskType: n.callTaskType,
       eventSubTrigger: n.eventSubTrigger, eventSubInterrupting: n.eventSubInterrupting,
@@ -273,25 +275,29 @@ export function computeCoords(
   return { colCenterX, gutterX, rowMid, channelY, poolChannelY, nodeGeom, lanes, poolGeoms, width, height, bandRight, headerW: totalHeader, titleH, portPt };
 }
 
-/** 境界イベントを対象 Activity の交差軸プラス側（論理 bottom）の辺へ載せる。 */
+/**
+ * 境界イベントを対象 Activity の辺へ載せる。既定は交差軸プラス側(論理 bottom)、
+ * 上のプールからメッセージを受けるものは交差軸マイナス側(論理 top)。S-53。
+ */
 function overlayBoundaryEvents(g: NormGraph, nodeGeom: Map<string, NodeGeom>): void {
-  const groups = new Map<string, string[]>();
+  const top = boundaryTopEvents(g);
+  const groups = new Map<string, { top: string[]; bottom: string[] }>();
   for (const n of g.nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo || !nodeGeom.has(n.attachedTo)) continue;
-    const list = groups.get(n.attachedTo) ?? [];
-    list.push(n.id);
-    groups.set(n.attachedTo, list);
+    const group = groups.get(n.attachedTo) ?? { top: [], bottom: [] };
+    (top.has(n.id) ? group.top : group.bottom).push(n.id);
+    groups.set(n.attachedTo, group);
   }
-  for (const [hostId, ids] of groups) {
+  for (const [hostId, group] of groups) {
     const host = nodeGeom.get(hostId)!;
     const r = EVENT_R;
-    ids.forEach((id, i) => {
+    const place = (ids: string[], onTop: boolean) => ids.forEach((id, i) => {
       const ng = nodeGeom.get(id);
       if (!ng) return;
-      // 対象の下辺の右半分に並べ、中心(下辺ポート。文書への落としや上辺入りの列中心)を空ける。
-      // 中心に置くと、境界イベント宛メッセージの下辺スタブが対象の縦線と同じ x で重なる。
+      // 対象の辺の右半分に並べ、中心(上下ポート。文書への落としや頂点入りの列中心)を空ける。
+      // 中心に置くと、境界イベント宛メッセージの縦線が対象の縦線と同じ x で重なる。
       const cx = host.x + host.w * (0.5 + (i + 1) / (2 * (ids.length + 1)));
-      const cy = host.y + host.h;
+      const cy = onTop ? host.y : host.y + host.h;
       ng.cx = cx;
       ng.cy = cy;
       ng.w = r * 2;
@@ -299,5 +305,7 @@ function overlayBoundaryEvents(g: NormGraph, nodeGeom: Map<string, NodeGeom>): v
       ng.x = cx - r;
       ng.y = cy - r;
     });
+    place(group.top, true);
+    place(group.bottom, false);
   }
 }
