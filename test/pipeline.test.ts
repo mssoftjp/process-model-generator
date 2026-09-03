@@ -1852,7 +1852,13 @@ high -> e`);
     const start = mid.points[0]!;
     const box = edgeLabelBox(mid)!;
     const far = Math.abs(box.x + box.w / 2 - start.x) + Math.abs(box.y + box.h / 2 - start.y);
-    expect(far).toBeLessThanOrEqual(160);
+    // 2 本の下出しは交差しない順にトラックを置く(L30)ので、中額の幹線は高額と 1 溝ぶん
+    // 共有してから分かれる。ラベルは分かれた直後(高額と共有しない最初の頂点の直後)に付く
+    const highEdge = r.geometry.edges.find((e) => e.label === '100万円以上')!;
+    const own = mid.points.find((p) => !highEdge.points.some((q) => q.x === p.x && q.y === p.y))!;
+    expect(box.x - own.x).toBeLessThanOrEqual(16);
+    expect(far).toBeLessThanOrEqual(240);
+    expect(r.geometry.edges.reduce((n, e) => n + (e.hops?.length ?? 0), 0)).toBe(0);
     const high = r.geometry.edges.find((e) => e.label === '100万円以上')!;
     const highStart = high.points[0]!;
     const highBox = edgeLabelBox(high)!;

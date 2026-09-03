@@ -2571,14 +2571,101 @@ function assignPoolGapTracks(ctx) {
   }
   return { poolGapTracks, poolGapRunTrack };
 }
+function gutterRunEnds(ctx) {
+  const rowPosOf = (id) => {
+    const n = ctx.nodeById.get(id);
+    const host = n && isAttachedBoundary(n) && n.attachedTo ? ctx.nodeById.get(n.attachedTo) ?? n : n;
+    if (!host) return 0;
+    return ctx.globalRow.get(rowKey(host.lane, ctx.p.row.get(host.id) ?? 0)) ?? 0;
+  };
+  const rank = (y) => {
+    switch (y.t) {
+      case "rowMid":
+        return ctx.globalRow.get(rowKey(y.lane, y.row)) ?? 0;
+      case "nodeCY":
+        return rowPosOf(y.id) + (y.offset ?? 0) / 1e3;
+      case "portY": {
+        const n = ctx.nodeById.get(y.id);
+        const edge = n && isAttachedBoundary(n) ? ctx.boundaryTop.has(y.id) ? -0.1 : 0.1 : 0;
+        const face = y.side === "top" ? -0.05 : y.side === "bottom" ? 0.05 : 0;
+        return rowPosOf(y.id) + edge + face;
+      }
+      case "portStubY":
+        return rowPosOf(y.id) + (y.side === "top" ? -1 : 1) * (0.05 + y.offset / 1e3);
+      case "channel":
+        return ctx.globalChannel.get(rowKey(y.lane, y.row)) ?? 0;
+      case "poolChannel":
+        return ctx.globalPoolGap.get(y.gap) ?? 0;
+      case "laneEdge":
+        return (ctx.globalRow.get(rowKey(y.lane, 0)) ?? 0) + (y.edge === "top" ? -0.5 : 0.5);
+    }
+  };
+  const colOf = (id) => {
+    const n = ctx.nodeById.get(id);
+    const host = n && isAttachedBoundary(n) && n.attachedTo ? n.attachedTo : id;
+    return ctx.p.col.get(host) ?? 0;
+  };
+  const sideOf = (x, g, side) => {
+    if (x.t === "gutter") {
+      if (x.g !== g) return x.g < g ? "left" : "right";
+      if (x.side === side) return "same";
+      return x.side === "exit" ? "left" : "right";
+    }
+    return colOf(x.id) < g ? "left" : "right";
+  };
+  const out = /* @__PURE__ */ new Map();
+  for (const plan of ctx.planned.values()) {
+    const pts = plan.points;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const x0 = pts[i].x;
+      const x1 = pts[i + 1].x;
+      if (x0.t !== "gutter" || x1.t !== "gutter" || x0.run !== x1.run) continue;
+      const y0 = rank(pts[i].y);
+      const y1 = rank(pts[i + 1].y);
+      const ends = { lo: Math.min(y0, y1), hi: Math.max(y0, y1), left: [], right: [] };
+      const prev = pts[i - 1];
+      const next = pts[i + 2];
+      if (prev) {
+        const s = sideOf(prev.x, x0.g, x0.side);
+        if (s !== "same") ends[s].push(y0);
+      }
+      if (next) {
+        const s = sideOf(next.x, x0.g, x0.side);
+        if (s !== "same") ends[s].push(y1);
+      }
+      out.set(x0.run, ends);
+    }
+  }
+  return out;
+}
 function assignGutterTracks(ctx) {
   const gutterTracks = /* @__PURE__ */ new Map();
   const gutterRunTrack = /* @__PURE__ */ new Map();
+  const ends = gutterRunEnds(ctx);
+  const inside2 = (y, r) => y > r.lo && y < r.hi;
+  const crossLeftOf = (p, q) => {
+    const P = ends.get(p);
+    const Q = ends.get(q);
+    if (!P || !Q) return 0;
+    let n = 0;
+    for (const y of Q.left) if (inside2(y, P)) n++;
+    for (const y of P.right) if (inside2(y, Q)) n++;
+    return n;
+  };
   for (const [key2, runs] of ctx.gutterRuns) {
     const i = key2.lastIndexOf(":");
     const gi = Number(key2.slice(0, i));
     const side = key2.slice(i + 1);
-    const sorted = runs.slice().sort((x, y) => x.b - x.a - (y.b - y.a) || x.runId - y.runId);
+    const score2 = /* @__PURE__ */ new Map();
+    for (const r of runs) {
+      let s = 0;
+      for (const o of runs) {
+        if (o.runId === r.runId) continue;
+        s += crossLeftOf(r.runId, o.runId) - crossLeftOf(o.runId, r.runId);
+      }
+      score2.set(r.runId, s);
+    }
+    const sorted = runs.slice().sort((x, y) => score2.get(x.runId) - score2.get(y.runId) || x.b - x.a - (y.b - y.a) || x.runId - y.runId);
     const placed = [];
     let count = 0;
     for (const r of sorted) {

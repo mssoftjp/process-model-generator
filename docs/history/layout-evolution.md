@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L29
+# Layout Evolution, L1–L30
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -226,6 +226,12 @@ Outcome: 2,000 seeds × 2 orientations with zero violations for the first time; 
 An external review found that a message into a message boundary event was silently never aligned: the S-15 lower bound moved the boundary event right, the boundary pin moved it back onto its activity, the relaxation never converged, and the constraint was dropped, leaving a message that ran backwards in time with no diagnostic. The constraint now applies to the activity the event is attached to. Extending the fuzz generator to send cross-pool messages into boundary events then exposed that no routing pattern handled such a target at all: boundary events are overlaid on the activity's south edge in P4, so every left-entry pattern ended in a diagonal (O-1), and the vertex patterns collided with the activity's own south port because a single boundary event sat at the activity's centre. Boundary events now hang over the right half of the activity, and the first repair routed the message through the gutter right of the activity's column into a stub below the circle. That drawing was valid but poor: a message from the pool above looped around the activity, crossed its outgoing flow and entered the event from below with a hook. The second repair used the freedom BPMN gives boundary events: an event that receives a message from a pool above hangs on the north edge, so the message drops straight from the sender's south face through the corridor into the circle with at most two bends (the mirror image for a sender below). The event's label moved to the right of the circle, shifted away from the activity, so that neither the incoming message nor the sequence flow leaving the circle crosses it. The gutter-and-stub route remains as the fallback when the sender's face is taken. The specification moved to v1.5.
 
 Outcome: 2,000 seeds × 2 orientations with the extended generator and zero violations; all corpus diagrams byte-identical (none uses boundary events).
+
+## L30 — Order gutter tracks by crossings (2026-09-03)
+
+Looking at two sequence flows leaving the boundary events of one activity, the user pointed out that the lower exit only needed a shorter first segment to avoid both of its crossings. The gutter had ordered its tracks by interval length since L3 ("shorter runs nearer the ports"), which is right for nested runs but wrong for staggered ones: two same-direction exits with intervals a1 < a2 < b1 < b2 cross twice with the shorter run inside and never with the later-starting run inside. Track order is now chosen by counting, for each pair, the horizontal arms of one run that fall inside the vertical span of the other; the arm positions are read from the planned polylines and carry a sub-row rank so that offset stubs and boundary-event edges leaving the same row are ordered too. Length remains the tie-break.
+
+Outcome: corpus hops 62 → 60 (delivery_acceptance loses a crossed pair of data lines), fuzz hops 91,640 → 89,003 over 2,000 seeds × 2 orientations, no violations; 27 corpus diagrams byte-identical. The specification moved to v1.6.
 
 ## Open items retained from the loops
 
