@@ -1861,10 +1861,12 @@ function place(g) {
   const docIds = new Set(g.nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
   const col = layerColumns(g, docIds);
   pinBoundaryColumns(g, col, docIds);
+  alignMessageTiming(g, col, docIds);
+  keepDocsOffMessageCorridors(g, col, docIds);
   pullReadableDocColumns(g, col, docIds);
   keepDocsOffForeignSpine(g, col, docIds);
   snapStoresToLaneWriter(g, col);
-  alignMessageStarts(g, col);
+  pullStartsToSuccessor(g, col);
   const { row, laneRows, reserved } = assignRows(g, col, docIds);
   const maxCol = Math.max(0, ...[...col.values()]);
   return { col, row, laneRows, maxCol, reserved };
@@ -1909,11 +1911,14 @@ function pullReadableDocColumns(g, col, docIds) {
 function keepDocsOffForeignSpine(g, col, docIds) {
   const writersOf = (id) => new Set(g.edges.filter((e) => e.kind === "assoc" && e.to === id).map((e) => e.from));
   const foreignSpine = (lane, c, ignore) => g.nodes.some((n) => n.onSpine && n.lane === lane && col.get(n.id) === c && !ignore.has(n.id) && !isDocLike(n.kind) && n.kind !== "start" && n.kind !== "end");
+  const nodeCol = (id) => col.get(id) ?? -1;
+  const communicates = (id) => g.edges.some((e) => e.kind === "msg" && !e.fromPool && !e.toPool && (e.from === id || e.to === id) && nodeCol(e.from === id ? e.to : e.from) === nodeCol(id));
   for (const n of g.nodes) {
     if (n.kind !== "doc" || !docIds.has(n.id)) continue;
     const writers = writersOf(n.id);
     if (writers.size === 0) continue;
     if (g.edges.some((e) => e.kind === "assoc" && e.from === n.id)) continue;
+    if ([...writers].some(communicates)) continue;
     const here = col.get(n.id);
     if (!foreignSpine(n.lane, here, writers)) continue;
     const home = Math.max(...[...writers].map((id) => col.get(id) ?? 0));
@@ -1934,58 +1939,92 @@ function snapStoresToLaneWriter(g, col) {
     if (home < here) col.set(n.id, home);
   }
 }
-function alignMessageStarts(g, col) {
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+function alignMessageTiming(g, col, docIds) {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const poolOf = (id) => {
-    const n = nodeById.get(id);
-    return n ? poolOfLane.get(n.lane) : void 0;
+  const messages = g.edges.filter((e) => e.kind === "msg" && !e.fromPool && !e.toPool && nodeById.has(e.from) && nodeById.has(e.to)).sort((a, b) => a.declIndex - b.declIndex);
+  if (messages.length === 0) return;
+  const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)));
+  const limit = g.nodes.length + g.edges.length + 2;
+  const relax = (active2) => {
+    for (let iter = 0; ; iter++) {
+      let changed = false;
+      for (const e of active2) {
+        const need = col.get(e.from) ?? 0;
+        if ((col.get(e.to) ?? 0) < need) {
+          col.set(e.to, need);
+          changed = true;
+        }
+      }
+      for (const e of fwd) {
+        const need = (col.get(e.from) ?? 0) + 1;
+        if ((col.get(e.to) ?? 0) < need) {
+          col.set(e.to, need);
+          changed = true;
+        }
+      }
+      for (const n of g.nodes) {
+        if (!isAttachedBoundary(n)) continue;
+        const hc = col.get(n.attachedTo);
+        if (hc !== void 0 && col.get(n.id) !== hc) {
+          col.set(n.id, hc);
+          changed = true;
+        }
+      }
+      if (!changed) return true;
+      if (iter > limit) return false;
+    }
   };
-  const startLike = /* @__PURE__ */ new Set();
-  const receiving = (id) => {
-    const n = nodeById.get(id);
-    return !!n && (n.kind === "task" && n.subtype === "receive" || n.kind === "mid" && n.subtype === "message" && n.eventThrow !== true);
-  };
+  const active = [];
+  for (const m of messages) {
+    const snapshot = new Map(col);
+    active.push(m);
+    if (!relax(active)) {
+      active.pop();
+      for (const [id, c] of snapshot) col.set(id, c);
+    }
+  }
+}
+function keepDocsOffMessageCorridors(g, col, docIds) {
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const laneIndex = new Map(g.lanes.map((l, i) => [l.id, i]));
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const corridors = /* @__PURE__ */ new Set();
+  for (const e of g.edges) {
+    if (e.kind !== "msg" || e.fromPool || e.toPool) continue;
+    const u = nodeById.get(e.from);
+    const v = nodeById.get(e.to);
+    if (!u || !v || col.get(u.id) !== col.get(v.id)) continue;
+    const pu = poolIndex.get(poolOfLane.get(u.lane) ?? "");
+    const pv = poolIndex.get(poolOfLane.get(v.lane) ?? "");
+    if (pu === void 0 || pv === void 0 || Math.abs(pu - pv) !== 1) continue;
+    const c = col.get(u.id);
+    const down = pu < pv;
+    for (const [end, towardGap] of [[u, down], [v, !down]]) {
+      const li = laneIndex.get(end.lane);
+      for (const lane of g.lanes) {
+        if (poolOfLane.get(lane.id) !== poolOfLane.get(end.lane)) continue;
+        const i = laneIndex.get(lane.id);
+        if (towardGap ? i >= li : i <= li) corridors.add(`${lane.id}:${c}`);
+      }
+    }
+  }
+  if (corridors.size === 0) return;
+  for (const n of g.nodes) {
+    if (!docIds.has(n.id)) continue;
+    if (g.edges.some((e) => e.from === n.id || e.kind !== "assoc" && e.to === n.id)) continue;
+    let c = col.get(n.id);
+    for (let guard = 0; guard < g.nodes.length && corridors.has(`${n.lane}:${c}`); guard++) c++;
+    if (c !== col.get(n.id)) col.set(n.id, c);
+  }
+}
+function pullStartsToSuccessor(g, col) {
   for (const n of g.nodes) {
     if (n.kind !== "start") continue;
-    startLike.add(n.id);
-    for (const e of g.edges) if (e.kind === "seq" && e.from === n.id && receiving(e.to)) startLike.add(e.to);
-  }
-  const triggers = [];
-  for (const e of g.edges) {
-    if (e.kind !== "msg" || e.fromPool || e.toPool || !startLike.has(e.to)) continue;
-    const fp = poolOf(e.from);
-    const tp = poolOf(e.to);
-    if (fp === void 0 || tp === void 0 || fp === tp) continue;
-    triggers.push({ from: e.from, to: e.to, fromPool: fp, toPool: tp });
-  }
-  if (triggers.length === 0) return;
-  const pools = [...new Set(triggers.flatMap((t) => [t.fromPool, t.toPool]))];
-  const indeg = new Map(pools.map((p) => [p, 0]));
-  for (const t of triggers) indeg.set(t.toPool, (indeg.get(t.toPool) ?? 0) + 1);
-  const order = [];
-  const queue = pools.filter((p) => indeg.get(p) === 0).sort();
-  while (queue.length > 0) {
-    const p = queue.shift();
-    order.push(p);
-    for (const t of triggers.filter((t2) => t2.fromPool === p)) {
-      const d = (indeg.get(t.toPool) ?? 0) - 1;
-      indeg.set(t.toPool, d);
-      if (d === 0) queue.push(t.toPool);
-    }
-    queue.sort();
-  }
-  for (const pool of order) {
-    let shift = 0;
-    for (const t of triggers) {
-      if (t.toPool !== pool || !order.includes(t.fromPool)) continue;
-      shift = Math.max(shift, (col.get(t.from) ?? 0) - (col.get(t.to) ?? 0));
-    }
-    if (shift <= 0) continue;
-    for (const n of g.nodes) {
-      if (poolOfLane.get(n.lane) !== pool) continue;
-      col.set(n.id, (col.get(n.id) ?? 0) + shift);
-    }
+    const succ = g.edges.filter((e) => e.kind === "seq" && e.from === n.id).map((e) => col.get(e.to) ?? 0);
+    if (succ.length === 0) continue;
+    const target = Math.min(...succ) - 1;
+    if (target > (col.get(n.id) ?? 0)) col.set(n.id, target);
   }
 }
 function layerColumns(g, docIds) {
@@ -2183,11 +2222,11 @@ function route(g, p, optimizeReadability = false, options) {
     plans.push(plan);
     ctx.planned.set(e.id, plan);
   }
-  separateSharedEntries(ctx, plans);
+  const { poolGapTracks, poolGapRunTrack } = assignPoolGapTracks(ctx);
+  separateSharedEntries(ctx, plans, poolGapRunTrack);
   bundleSameOrigin(ctx, plans);
   const { gutterTracks, gutterRunTrack } = assignGutterTracks(ctx);
   const { channelTracks, channelRunTrack } = assignChannelTracks(ctx);
-  const { poolGapTracks, poolGapRunTrack } = assignPoolGapTracks(ctx);
   return {
     plans,
     gutterTracks,
@@ -2200,8 +2239,22 @@ function route(g, p, optimizeReadability = false, options) {
     poolExteriorGutter: ctx.poolExteriorGutter
   };
 }
-function separateSharedEntries(ctx, plans) {
+function separateSharedEntries(ctx, plans, poolGapRunTrack) {
   const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
+  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
+  const ladderRank = (plan, ownId, peerCol) => {
+    const pt = plan.points.find((q) => q.y.t === "poolChannel");
+    if (!pt || pt.y.t !== "poolChannel") return 0;
+    const t = poolGapRunTrack.get(pt.y.run) ?? 0;
+    const own = ctx.nodeById.get(ownId);
+    const ownPool = own ? poolIndex.get(lanePool.get(own.lane) ?? "") : void 0;
+    if (ownPool === void 0) return 0;
+    const isUpper = ownPool === pt.y.gap;
+    const dir = Math.sign(peerCol - (ctx.p.col.get(ownId) ?? 0));
+    const closeness = isUpper ? -t : t;
+    return dir * closeness;
+  };
   const groups = /* @__PURE__ */ new Map();
   const add2 = (nodeId, side, axis, slot) => {
     const key2 = `${nodeId}:${side}`;
@@ -2254,7 +2307,13 @@ function separateSharedEntries(ctx, plans) {
       const nb = ctx.nodeById.get(b.end === "to" ? eb.from : eb.to);
       const ca = na ? axis === "x" ? ctx.p.col.get(na.id) : ctx.globalRow.get(rowKey(na.lane, ctx.p.row.get(na.id))) : ea.declIndex;
       const cb = nb ? axis === "x" ? ctx.p.col.get(nb.id) : ctx.globalRow.get(rowKey(nb.lane, ctx.p.row.get(nb.id))) : eb.declIndex;
-      return ca - cb || ea.declIndex - eb.declIndex;
+      if (ca !== cb) return ca - cb;
+      if (axis === "x" && na && nb) {
+        const ra = ladderRank(a.plan, nodeId, ca);
+        const rb = ladderRank(b.plan, nodeId, cb);
+        if (ra !== rb) return ra - rb;
+      }
+      return ea.declIndex - eb.declIndex;
     });
     const kind = ctx.nodeById.get(nodeId)?.kind;
     const gw = kind !== void 0 && isGatewayKind(kind);
@@ -2463,20 +2522,20 @@ function colRunEnd(e, side) {
   if (side === "from") return e.fromPool ? `#pool:${e.fromPool}` : e.from;
   return e.toPool ? `#pool:${e.toPool}` : e.to;
 }
-function reserveColRun(ctx, col, a, b, e, from = colRunEnd(e, "from"), shareFace) {
+function reserveColRun(ctx, col, a, b, e, from = colRunEnd(e, "from"), shareFace, pairEdge) {
   const to = colRunEnd(e, "to");
-  if (!canReserveColRun(ctx, col, a, b, from, to, shareFace)) return false;
+  if (!canReserveColRun(ctx, col, a, b, from, to, shareFace, pairEdge)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   const runs = ctx.colRuns.get(col) ?? [];
-  runs.push({ a: lo, b: hi, from, to });
+  runs.push({ a: lo, b: hi, from, to, edge: e.id });
   ctx.colRuns.set(col, runs);
   return true;
 }
-function canReserveColRun(ctx, col, a, b, from, to, shareFace) {
+function canReserveColRun(ctx, col, a, b, from, to, shareFace, pairEdge) {
   if (!columnClear(ctx, col, a, b)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   return !(ctx.colRuns.get(col) ?? []).some(
-    (r) => r.from !== from && r.to !== to && r.a < hi && lo < r.b && !(shareFace !== void 0 && !r.exclusive && (r.from === shareFace || r.to === shareFace))
+    (r) => r.from !== from && r.to !== to && r.a < hi && lo < r.b && r.edge !== pairEdge && !(shareFace !== void 0 && !r.exclusive && (r.from === shareFace || r.to === shareFace))
   );
 }
 function markExclusiveColRun(ctx, col) {
@@ -2596,8 +2655,15 @@ function westFree(ctx, v, e) {
   }
   return crossRow === 1 && ctx.g.edges.some((o) => o.id === e.id && o.kind === "seq");
 }
-function faceQuiet(ctx, nodeId, e) {
-  return !ctx.g.edges.some((o) => o.id !== e.id && (o.to === nodeId && (o.kind !== "seq" || o.isReturn || !!o.fromPool) || o.from === nodeId && o.kind !== "seq"));
+function faceQuiet(ctx, nodeId, face, e, ignore) {
+  return !ctx.g.edges.some((o) => {
+    if (o.id === e.id || o.id === ignore || o.from !== nodeId && o.to !== nodeId) return false;
+    const done = ctx.planned.get(o.id);
+    if (done) {
+      return o.from === nodeId && done.fromSide === face || o.to === nodeId && done.toSide === face;
+    }
+    return o.to === nodeId && (o.kind !== "seq" || o.isReturn || !!o.fromPool) || o.from === nodeId && o.kind !== "seq";
+  });
 }
 function topUsersSlottable(ctx, u) {
   for (const e2 of ctx.g.edges) {
@@ -2637,7 +2703,7 @@ function planForward(ctx, e) {
         ]
       };
     }
-    if (u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) && faceQuiet(ctx, v.node.id, e) && bottomOutFree(ctx, v, gV) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
+    if (u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) && faceQuiet(ctx, v.node.id, "bottom", e) && bottomOutFree(ctx, v, gV) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
     // 未計画なら同一行の書き手(左入り)だけを許す
     !ctx.g.edges.some((o) => {
       if (o.id === e.id || o.kind !== "assoc" || o.to !== u.node.id) return false;
@@ -3089,7 +3155,10 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
     if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return void 0;
   }
   const straight = u.col === v.col;
-  if (straight && !(faceQuiet(ctx, u.node.id, e) && faceQuiet(ctx, v.node.id, e))) return void 0;
+  const pair = straight ? ctx.g.edges.find((o) => o.kind === "msg" && o.from === e.to && o.to === e.from) : void 0;
+  const pairPlan = pair ? ctx.planned.get(pair.id) : void 0;
+  const pairId = pair?.id;
+  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId) && faceQuiet(ctx, v.node.id, toSide, e, pairId))) return void 0;
   const shareU = !straight && slotted(u.node) ? u.node.id : void 0;
   const shareV = !straight && slotted(v.node) ? v.node.id : void 0;
   const gapRun = {
@@ -3102,23 +3171,25 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
     if (!gapOrderConsistent(ctx, u.col, { ...gapRun, upperSide: down })) return void 0;
     if (!gapOrderConsistent(ctx, v.col, { ...gapRun, upperSide: !down })) return void 0;
   }
-  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return void 0;
-  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV)) return void 0;
-  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
+  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU, pairId)) return void 0;
+  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV, pairId)) return void 0;
+  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU, pairId);
   if (straight) markExclusiveColRun(ctx, u.col);
   else ctx.colRuns.get(u.col).at(-1).gap = { ...gapRun, upperSide: down };
-  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV);
+  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV, pairId);
   if (straight) markExclusiveColRun(ctx, v.col);
   else ctx.colRuns.get(v.col).at(-1).gap = { ...gapRun, upperSide: !down };
   if (straight) {
+    const PAIR = 6;
+    const off = pair === void 0 ? 0 : pairPlan ? PAIR : -PAIR;
     return {
       edgeId: e.id,
       fromSide,
       toSide,
       pattern: "drop",
       points: [
-        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.to), y: portY(e.to, toSide) }
+        { x: nodeCX(e.from, off), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.to, off), y: portY(e.to, toSide) }
       ]
     };
   }

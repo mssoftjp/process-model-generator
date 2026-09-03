@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L24
+# Layout Evolution, L1–L25
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -196,6 +196,14 @@ Since L12 every pool started at column 0, so a supplier's process began at the l
 The shift exposed a latent routing hazard: a data association whose target lies to the left of its source could take the baseline patterns and cut through nodes between them. Direct and row-approach patterns now require a forward target.
 
 Outcome: restaurant and credit-scoring start their second pools under the triggering activity, at the cost of wider bands; other diagrams are unchanged. Fuzz violation set identical to v0.2.19.
+
+## L25 — Align every message with its sender (2026-09-03)
+
+L24 aligned only the first message of a pool and did so by shifting the whole pool, which left later exchanges running backwards and made request/reply pairs cross where the slot order on a face disagreed with the track order in the corridor. Two changes replaced it. Messages became lower-bound constraints of weight 0 on the receiver, admitted one at a time in declaration order into the same relaxation as the sequence layering, so a receiver sits at or after its sender and a reply can share a column with its request; a constraint that cannot converge is dropped rather than reverting the whole alignment. Start events are pulled right to their successor afterwards. Corridor tracks are assigned before entry slots, and slots on one face are ordered by the ladder rule: the line that turns at the nearer track takes the slot on the side it travels toward. Two straight messages between the same two nodes are offset by six pixels each way.
+
+The corpus then showed two placement effects. A document returned to a writer's column blocked the straight pair above it, so writers with a same-column partner keep their column free; and an annotation layered into a message corridor did the same, so write-only documents in a corridor move one column right. In invoice_reception the second of two stacked branches still cannot use its column on either side, and its detour adds crossings; that configuration needs a row-aware placement to resolve.
+
+Outcome: restaurant matches the reference layout (bends 19 → 9, no crossings), corpus bends 380 → 366, one delivery diagram trades six crossings for a straight first message. Fuzz violation set identical to the previous release.
 
 ## Open items retained from the loops
 

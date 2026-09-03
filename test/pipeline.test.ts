@@ -715,14 +715,32 @@ describe('orientation (縦横は同じ意味の別修辞)', () => {
 });
 
 describe('プールごとの時間軸', () => {
-  it('途中のメッセージフローは受信側プロセスの列を押し広げない', () => {
-    const src = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n A2[追加]\n s1 -> A\n A -> A2\npool p2[処理者]\nlane L2\n start s2\n B[処理]\n C[続き]\n s2 -> B\n B -> C\n A2 ~> C`;
+  it('途中のメッセージは受信側を送信元より手前に置かず、送信側と受信側の前段は動かさない', () => {
+    // 受信側 C は送信元 A3 の列(3)まで右へ。s2 と B は据え置き(待ち時間が空白として現れる)。
+    const src = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n A2[追加]\n A3[再依頼]\n s1 -> A\n A -> A2\n A2 -> A3\npool p2[処理者]\nlane L2\n start s2\n B[処理]\n C[続き]\n s2 -> B\n B -> C\n A3 ~> C`;
     const { ir } = parse(src);
     const n = normalize(ir, false);
     const p = place(n);
     expect(p.col.get('s1')).toBe(0);
+    expect(p.col.get('A3')).toBe(3);
     expect(p.col.get('s2')).toBe(0);
-    expect(p.col.get('C')).toBe(2);
+    expect(p.col.get('B')).toBe(1);
+    expect(p.col.get('C')).toBe(3);
+  });
+
+  it('返信を受ける工程は返信元の直下に揃い、同列の往復は平行な 2 本の縦線になる', () => {
+    const src = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n s1 -> A\npool p2[処理者]\nlane L2\n start(message) s2\n B[処理]\n s2 -> B\n A ~> s2\n B ~> A`;
+    const r = noOracleViolations(src);
+    const p = place(normalize(parse(src).ir, false));
+    expect(p.col.get('A')).toBe(1);
+    expect(p.col.get('B')).toBe(2);
+    const msgs = r.geometry.edges.filter((e) => e.kind === 'msg');
+    expect(msgs).toHaveLength(2);
+    const pair = `pool p1[依頼者]\nlane L1\n start s1\n A[依頼]\n s1 -> A\npool p2[処理者]\nlane L2\n task(receive) B[処理]\n A ~> B\n B ~> A`;
+    const rp = noOracleViolations(pair);
+    const straight = rp.geometry.edges.filter((e) => e.kind === 'msg' && e.points.length === 2);
+    expect(straight).toHaveLength(2);
+    expect(straight[0]!.points[0]!.x).not.toBe(straight[1]!.points[0]!.x);
   });
 
   it('開始イベントへのメッセージは受信側プールを送信元の列まで平行移動する', () => {
@@ -739,12 +757,16 @@ describe('プールごとの時間軸', () => {
     expect(msg.points).toHaveLength(2); // 同列なので一直線
   });
 
-  it('互いに開始を送り合うプールは動かさない', () => {
+  it('互いに開始を送り合う循環は、先に宣言した通信だけを整列に使う', () => {
+    // A ~> s2 は s2 ≥ col(A) を満たせる。B ~> s1 は s1 ≥ col(B) ≥ col(s2)+1 ≥ col(A)+1 ≥ col(s1)+2 で
+    // 収束しないので制約から外れ、直前の列に戻る。
     const src = `pool p1[甲]\nlane L1\n start s1\n A[a]\n s1 -> A\npool p2[乙]\nlane L2\n start s2\n B[b]\n s2 -> B\n A ~> s2\n B ~> s1`;
     const n = normalize(parse(src).ir, false);
     const p = place(n);
     expect(p.col.get('s1')).toBe(0);
-    expect(p.col.get('s2')).toBe(0);
+    expect(p.col.get('A')).toBe(1);
+    expect(p.col.get('s2')).toBe(1);
+    expect(p.col.get('B')).toBe(2);
   });
 });
 

@@ -59,7 +59,7 @@ interface Ctx {
   //      反対側から同じ列に着く走行との重なりは、回廊トラックの入れ子順(assignPoolGapTracks)
   //      が一貫して並べられるときだけ安全なので、その判定に使う。
   colRuns: Map<number, Array<{
-    a: number; b: number; from: string; to: string; exclusive?: boolean;
+    a: number; b: number; from: string; to: string; edge: string; exclusive?: boolean;
     gap?: { a: number; b: number; upperX: number; lowerX: number; upperSide: boolean };
   }>>;
   // 行基線の水平走行(direct・drop・row/channel-approach の基線区間)。列スケール
@@ -126,12 +126,13 @@ export function route(
     plans.push(plan);
     ctx.planned.set(e.id, plan);
   }
-  separateSharedEntries(ctx, plans);
+  // 回廊トラックを先に決め、同じ面に集まる通信のスロット順をトラック順に合わせる(梯子形)
+  const { poolGapTracks, poolGapRunTrack } = assignPoolGapTracks(ctx);
+  separateSharedEntries(ctx, plans, poolGapRunTrack);
   bundleSameOrigin(ctx, plans);
 
   const { gutterTracks, gutterRunTrack } = assignGutterTracks(ctx);
   const { channelTracks, channelRunTrack } = assignChannelTracks(ctx);
-  const { poolGapTracks, poolGapRunTrack } = assignPoolGapTracks(ctx);
   return {
     plans, gutterTracks, channelTracks, channelRunTrack, gutterRunTrack,
     poolGapTracks, poolGapRunTrack, gutterLabelNeed: ctx.gutterLabelNeed,
@@ -140,8 +141,27 @@ export function route(
 }
 
 /** 同じ図形入口へ収束する非シーケンス線を、辺上の短いスロットへ分ける。 */
-function separateSharedEntries(ctx: Ctx, plans: EdgePlan[]): void {
+function separateSharedEntries(ctx: Ctx, plans: EdgePlan[], poolGapRunTrack: Map<number, number>): void {
   const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
+  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
+  /**
+   * 同じ面から同じ方向へ回廊を渡る通信同士の順序(梯子形の規則): 回廊で自分に近いトラックで
+   * 曲がる線ほど進行方向側のスロットに置く。反対にすると、遠いトラックまで降りる線の縦区間を
+   * 近いトラックの水平区間が横切って X 字になる。rank 昇順 = 左→右。
+   */
+  const ladderRank = (plan: EdgePlan, ownId: string, peerCol: number): number => {
+    const pt = plan.points.find((q) => q.y.t === 'poolChannel');
+    if (!pt || pt.y.t !== 'poolChannel') return 0;
+    const t = poolGapRunTrack.get(pt.y.run) ?? 0;
+    const own = ctx.nodeById.get(ownId);
+    const ownPool = own ? poolIndex.get(lanePool.get(own.lane) ?? '') : undefined;
+    if (ownPool === undefined) return 0;
+    const isUpper = ownPool === pt.y.gap;
+    const dir = Math.sign(peerCol - (ctx.p.col.get(ownId) ?? 0));
+    const closeness = isUpper ? -t : t;
+    return dir * closeness;
+  };
   type Slot = { plan: EdgePlan; end: 'from' | 'to' };
   const groups = new Map<string, { axis: 'x' | 'y'; nodeId: string; slots: Slot[] }>();
   const add = (nodeId: string, side: PortSide, axis: 'x' | 'y', slot: Slot) => {
@@ -202,7 +222,13 @@ function separateSharedEntries(ctx: Ctx, plans: EdgePlan[]): void {
       const nb = ctx.nodeById.get(b.end === 'to' ? eb.from : eb.to);
       const ca = na ? (axis === 'x' ? ctx.p.col.get(na.id)! : ctx.globalRow.get(rowKey(na.lane, ctx.p.row.get(na.id)!))!) : ea.declIndex;
       const cb = nb ? (axis === 'x' ? ctx.p.col.get(nb.id)! : ctx.globalRow.get(rowKey(nb.lane, ctx.p.row.get(nb.id)!))!) : eb.declIndex;
-      return ca - cb || ea.declIndex - eb.declIndex;
+      if (ca !== cb) return ca - cb;
+      if (axis === 'x' && na && nb) {
+        const ra = ladderRank(a.plan, nodeId, ca);
+        const rb = ladderRank(b.plan, nodeId, cb);
+        if (ra !== rb) return ra - rb;
+      }
+      return ea.declIndex - eb.declIndex;
     });
     const kind = ctx.nodeById.get(nodeId)?.kind;
     const gw = kind !== undefined && isGatewayKind(kind);
@@ -471,13 +497,13 @@ function colRunEnd(e: NormEdge, side: 'from' | 'to'): string {
  */
 function reserveColRun(
   ctx: Ctx, col: number, a: number, b: number, e: NormEdge, from = colRunEnd(e, 'from'),
-  shareFace?: string,
+  shareFace?: string, pairEdge?: string,
 ): boolean {
   const to = colRunEnd(e, 'to');
-  if (!canReserveColRun(ctx, col, a, b, from, to, shareFace)) return false;
+  if (!canReserveColRun(ctx, col, a, b, from, to, shareFace, pairEdge)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   const runs = ctx.colRuns.get(col) ?? [];
-  runs.push({ a: lo, b: hi, from, to });
+  runs.push({ a: lo, b: hi, from, to, edge: e.id });
   ctx.colRuns.set(col, runs);
   return true;
 }
@@ -489,12 +515,13 @@ function reserveColRun(
  */
 function canReserveColRun(
   ctx: Ctx, col: number, a: number, b: number, from: string, to: string, shareFace?: string,
+  pairEdge?: string,
 ): boolean {
   if (!columnClear(ctx, col, a, b)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   return !(ctx.colRuns.get(col) ?? []).some(
     (r) =>
-      r.from !== from && r.to !== to && r.a < hi && lo < r.b &&
+      r.from !== from && r.to !== to && r.a < hi && lo < r.b && r.edge !== pairEdge &&
       !(shareFace !== undefined && !r.exclusive && (r.from === shareFace || r.to === shareFace)),
   );
 }
@@ -686,13 +713,21 @@ function westFree(ctx: Ctx, v: Cell, e: NormEdge): boolean {
   return crossRow === 1 && ctx.g.edges.some((o) => o.id === e.id && o.kind === 'seq');
 }
 
-/** ノードの上下面を使い得る他の辺(非 seq の出入り・戻り・プール発)が無いか。 */
-function faceQuiet(ctx: Ctx, nodeId: string, e: NormEdge): boolean {
-  return !ctx.g.edges.some((o) =>
-    o.id !== e.id && (
-      (o.to === nodeId && (o.kind !== 'seq' || o.isReturn || !!o.fromPool)) ||
-      (o.from === nodeId && o.kind !== 'seq')
-    ));
+/**
+ * ノードの面 face を使い得る他の辺が無いか。ignore は対の辺。
+ * 計画済みの辺は実際の入口・出口面で判定し、未計画の辺は静的に保守的に
+ * (非 seq の出入り・戻り・プール発は上下面を使い得る)扱う。
+ */
+function faceQuiet(ctx: Ctx, nodeId: string, face: PortSide, e: NormEdge, ignore?: string): boolean {
+  return !ctx.g.edges.some((o) => {
+    if (o.id === e.id || o.id === ignore || (o.from !== nodeId && o.to !== nodeId)) return false;
+    const done = ctx.planned.get(o.id);
+    if (done) {
+      return (o.from === nodeId && done.fromSide === face) || (o.to === nodeId && done.toSide === face);
+    }
+    return (o.to === nodeId && (o.kind !== 'seq' || o.isReturn || !!o.fromPool)) ||
+      (o.from === nodeId && o.kind !== 'seq');
+  });
 }
 
 /** u の上面を使う入りが全て非 seq(スロット分離の対象)か。戻り seq や行違いゲートウェイ入りがあれば false。 */
@@ -743,7 +778,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     // 2 点形はスロット分離を受けないので、工程の下面に他の非 seq の出入りが無いときだけ。
     if (
       u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) &&
-      faceQuiet(ctx, v.node.id, e) && bottomOutFree(ctx, v, gV) &&
+      faceQuiet(ctx, v.node.id, 'bottom', e) && bottomOutFree(ctx, v, gV) &&
       (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) &&
       // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
       // 未計画なら同一行の書き手(左入り)だけを許す
@@ -1299,7 +1334,16 @@ function planAcrossPoolGapZ(
   // さらに、チャネルから頂点へ降りる終端(planIntoTop 系)は列予約を持たないため、
   // 両端の面に他の非 seq の出入りが一切ないことを静的に要求する。
   const straight = u.col === v.col;
-  if (straight && !(faceQuiet(ctx, u.node.id, e) && faceQuiet(ctx, v.node.id, e))) return undefined;
+  // 同列の往復対(要求と返信が同じ 2 ノード間で共に一直線)は、互いを ±6px にずらした
+  // 2 本の平行な縦線にする。両端とも同じ 2 辺しか面を使わないので、ずらしは両端で一致する。
+  // 先に置く側(要求)は対が未計画でも対の存在だけで -6 に寄せておく。後の側(返信)は +6。
+  // 対が結局一直線にならなくても 6px のずれが残るだけで害はない。
+  const pair = straight
+    ? ctx.g.edges.find((o) => o.kind === 'msg' && o.from === e.to && o.to === e.from)
+    : undefined;
+  const pairPlan = pair ? ctx.planned.get(pair.id) : undefined;
+  const pairId = pair?.id;
+  if (straight && !(faceQuiet(ctx, u.node.id, fromSide, e, pairId) && faceQuiet(ctx, v.node.id, toSide, e, pairId))) return undefined;
   const shareU = !straight && slotted(u.node) ? u.node.id : undefined;
   const shareV = !straight && slotted(v.node) ? v.node.id : undefined;
   // 回廊は帯であり離散位置 gapPos では厚みが見えない。反対側から同じ列に着く走行とは、
@@ -1312,20 +1356,23 @@ function planAcrossPoolGapZ(
     if (!gapOrderConsistent(ctx, u.col, { ...gapRun, upperSide: down })) return undefined;
     if (!gapOrderConsistent(ctx, v.col, { ...gapRun, upperSide: !down })) return undefined;
   }
-  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU)) return undefined;
-  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV)) return undefined;
-  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU);
+  if (!canReserveColRun(ctx, u.col, gU, gapPos, e.from, e.to, shareU, pairId)) return undefined;
+  if (!canReserveColRun(ctx, v.col, gapPos, gV, e.from, e.to, shareV, pairId)) return undefined;
+  reserveColRun(ctx, u.col, gU, gapPos, e, e.from, shareU, pairId);
   if (straight) markExclusiveColRun(ctx, u.col);
   else ctx.colRuns.get(u.col)!.at(-1)!.gap = { ...gapRun, upperSide: down };
-  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV);
+  reserveColRun(ctx, v.col, gapPos, gV, e, e.from, shareV, pairId);
   if (straight) markExclusiveColRun(ctx, v.col);
   else ctx.colRuns.get(v.col)!.at(-1)!.gap = { ...gapRun, upperSide: !down };
   if (straight) {
+    const PAIR = 6;
+    // 対の両端は同じ 2 ノードなので、先に置いた側を左(-6)、後の側を右(+6)にすると向きが揃う
+    const off = pair === undefined ? 0 : pairPlan ? PAIR : -PAIR;
     return {
       edgeId: e.id, fromSide, toSide, pattern: 'drop',
       points: [
-        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
-        { x: nodeCX(e.to), y: portY(e.to, toSide) },
+        { x: nodeCX(e.from, off), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.to, off), y: portY(e.to, toSide) },
       ],
     };
   }

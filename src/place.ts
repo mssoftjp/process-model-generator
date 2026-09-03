@@ -27,10 +27,12 @@ export function place(g: NormGraph): Placement {
   const docIds = new Set(g.nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
   const col = layerColumns(g, docIds);
   pinBoundaryColumns(g, col, docIds);
+  alignMessageTiming(g, col, docIds);
+  keepDocsOffMessageCorridors(g, col, docIds);
   pullReadableDocColumns(g, col, docIds);
   keepDocsOffForeignSpine(g, col, docIds);
   snapStoresToLaneWriter(g, col);
-  alignMessageStarts(g, col);
+  pullStartsToSuccessor(g, col);
   const { row, laneRows, reserved } = assignRows(g, col, docIds);
   const maxCol = Math.max(0, ...[...col.values()]);
   return { col, row, laneRows, maxCol, reserved };
@@ -100,11 +102,20 @@ function keepDocsOffForeignSpine(g: NormGraph, col: Map<string, number>, docIds:
     g.nodes.some((n) =>
       n.onSpine && n.lane === lane && col.get(n.id) === c && !ignore.has(n.id) &&
       !isDocLike(n.kind) && n.kind !== 'start' && n.kind !== 'end');
+  // 同じ列の相手と通信する書き手の直下(自列)はメッセージの縦回廊(一直線の Z)。文書を戻すと
+  // 往復対が一直線を取れず側面経路で交差するので、そのような書き手の列へは戻さない。
+  // 相手が別の列なら Z は列中心を使わないので従来どおり戻す(invoice_reception で確認)。
+  const nodeCol = (id: string) => col.get(id) ?? -1;
+  const communicates = (id: string) =>
+    g.edges.some((e) =>
+      e.kind === 'msg' && !e.fromPool && !e.toPool && (e.from === id || e.to === id) &&
+      nodeCol(e.from === id ? e.to : e.from) === nodeCol(id));
   for (const n of g.nodes) {
     if (n.kind !== 'doc' || !docIds.has(n.id)) continue;
     const writers = writersOf(n.id);
     if (writers.size === 0) continue;
     if (g.edges.some((e) => e.kind === 'assoc' && e.from === n.id)) continue;
+    if ([...writers].some(communicates)) continue;
     const here = col.get(n.id)!;
     if (!foreignSpine(n.lane, here, writers)) continue;
     const home = Math.max(...[...writers].map((id) => col.get(id) ?? 0));
@@ -140,80 +151,110 @@ function snapStoresToLaneWriter(g: NormGraph, col: Map<string, number>): void {
 }
 
 /**
- * メッセージ開始の整列。各プールの時間軸は独立で、メッセージは列を進めない(S-15)。
- * ただし「注文が届いた時点で仕入先の工程が始まる」というトリガのタイミングは、
- * 開始イベントを送信元の列に揃えると読み取れる。BPMN も協調図の慣習として、
- * メッセージ開始イベントを送信活動の下に置く。
+ * メッセージの時系列整列(S-15)。各プールの時間軸は独立だが、通信の受信側を送信元より
+ * 手前の列に置くと、メッセージが時間を遡って見える。そこで、ノード間メッセージを
+ * 「受信側の列 ≥ 送信側の列」という重み 0 の下限制約として層化に加える。
+ * L12 が排した「メッセージで列を進める(重み 1)」とは違い、同列(一直線)を許すので
+ * 往復が一本の長い直列にはならず、受信側が送信元の直下に揃う。
  *
- * 規則: プール P の開始イベント(合成開始の直後ノードを含む)へ他プールのノードから
- * メッセージが入るとき、開始の列がその送信元の列より手前なら、P の全ノードを差分だけ
- * 右へ平行移動する。平行移動なので P 内部の配置は変わらない。
- * 送信元プールを先に確定するため、プール間のトリガ関係を位相順に処理し、
- * 循環するプール(互いに開始を送り合う)は動かさない。
+ * 規則: メッセージを宣言順に一本ずつ制約へ加え、工程辺(重み 1)と合わせた緩和を不動点まで
+ * 繰り返す。送信側は動かさない。要求を送った工程自身が返信を受けるような循環(重み 1 を含む
+ * 閉路)は収束しないので、回数上限で検出し、その一本だけを制約から外して直前の列へ戻す。
+ * 先に宣言した通信が優先される(決定的)。
  */
-function alignMessageStarts(g: NormGraph, col: Map<string, number>): void {
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+function alignMessageTiming(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const poolOf = (id: string) => {
-    const n = nodeById.get(id);
-    return n ? poolOfLane.get(n.lane) : undefined;
+  const messages = g.edges
+    .filter((e) => e.kind === 'msg' && !e.fromPool && !e.toPool && nodeById.has(e.from) && nodeById.has(e.to))
+    .sort((a, b) => a.declIndex - b.declIndex);
+  if (messages.length === 0) return;
+  const fwd = g.edges.filter((e) => isLayeringEdge(e, docIds) && !isAttachedBoundary(nodeById.get(e.to)!));
+  const limit = g.nodes.length + g.edges.length + 2;
+  const relax = (active: NormEdge[]): boolean => {
+    for (let iter = 0; ; iter++) {
+      let changed = false;
+      for (const e of active) {
+        const need = col.get(e.from) ?? 0;
+        if ((col.get(e.to) ?? 0) < need) { col.set(e.to, need); changed = true; }
+      }
+      for (const e of fwd) {
+        const need = (col.get(e.from) ?? 0) + 1;
+        if ((col.get(e.to) ?? 0) < need) { col.set(e.to, need); changed = true; }
+      }
+      // 境界イベントは対象と同じ列に張り付く
+      for (const n of g.nodes) {
+        if (!isAttachedBoundary(n)) continue;
+        const hc = col.get(n.attachedTo!);
+        if (hc !== undefined && col.get(n.id) !== hc) { col.set(n.id, hc); changed = true; }
+      }
+      if (!changed) return true;
+      if (iter > limit) return false;
+    }
   };
-  // 開始トリガ: 開始イベント、またはその直後のノード(受信タスク・受信イベント)へ入るメッセージ。
-  // 「注文待ち → 注文書を受信」のように、無印の開始の次で最初の通信を受ける形が多い。
-  // 直後ノードは受信要素(task(receive) / mid(message))に限る。返信を受ける普通のタスクまで
-  // 含めると往復がトリガの循環になり、整列が働かなくなる。
-  const startLike = new Set<string>();
-  const receiving = (id: string) => {
-    const n = nodeById.get(id);
-    return !!n && (
-      (n.kind === 'task' && n.subtype === 'receive') ||
-      (n.kind === 'mid' && n.subtype === 'message' && n.eventThrow !== true)
-    );
-  };
+  const active: NormEdge[] = [];
+  for (const m of messages) {
+    const snapshot = new Map(col);
+    active.push(m);
+    if (!relax(active)) {
+      active.pop();
+      for (const [id, c] of snapshot) col.set(id, c);
+    }
+  }
+}
+
+/**
+ * 同列の送受信対(時系列整列で揃った一直線の通信)が通る列中心は縦回廊。その経路上のレーン
+ * (送信側レーンとそのプール内で回廊側にあるレーン、受信側も同様)に層化された、読み手を
+ * 持たない文書・注釈が回廊を塞ぐと、通信が側面経路へ落ちて交差する。そのような文書類は
+ * 右隣の列へ逃がす(読み手が無いので列を進めても関連が逆走しない)。
+ */
+function keepDocsOffMessageCorridors(g: NormGraph, col: Map<string, number>, docIds: Set<string>): void {
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const laneIndex = new Map(g.lanes.map((l, i) => [l.id, i]));
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const corridors = new Set<string>(); // `${lane}:${col}`
+  for (const e of g.edges) {
+    if (e.kind !== 'msg' || e.fromPool || e.toPool) continue;
+    const u = nodeById.get(e.from);
+    const v = nodeById.get(e.to);
+    if (!u || !v || col.get(u.id) !== col.get(v.id)) continue;
+    const pu = poolIndex.get(poolOfLane.get(u.lane) ?? '');
+    const pv = poolIndex.get(poolOfLane.get(v.lane) ?? '');
+    if (pu === undefined || pv === undefined || Math.abs(pu - pv) !== 1) continue;
+    const c = col.get(u.id)!;
+    const down = pu < pv;
+    for (const [end, towardGap] of [[u, down], [v, !down]] as const) {
+      const li = laneIndex.get(end.lane)!;
+      for (const lane of g.lanes) {
+        if (poolOfLane.get(lane.id) !== poolOfLane.get(end.lane)) continue;
+        const i = laneIndex.get(lane.id)!;
+        if (towardGap ? i >= li : i <= li) corridors.add(`${lane.id}:${c}`);
+      }
+    }
+  }
+  if (corridors.size === 0) return;
+  for (const n of g.nodes) {
+    if (!docIds.has(n.id)) continue;
+    if (g.edges.some((e) => e.from === n.id || (e.kind !== 'assoc' && e.to === n.id))) continue;
+    let c = col.get(n.id)!;
+    for (let guard = 0; guard < g.nodes.length && corridors.has(`${n.lane}:${c}`); guard++) c++;
+    if (c !== col.get(n.id)) col.set(n.id, c);
+  }
+}
+
+/**
+ * 開始イベントを直後のノードの直前へ寄せる。メッセージ整列で直後ノードが右へ動くと、
+ * 開始だけが左端に残って長い辺になる(「注文待ち → 注文書を受信」)。開始は前任者を
+ * 持たないので右へ寄せても制約を破らない。合成開始も同じ。
+ */
+function pullStartsToSuccessor(g: NormGraph, col: Map<string, number>): void {
   for (const n of g.nodes) {
     if (n.kind !== 'start') continue;
-    startLike.add(n.id);
-    for (const e of g.edges) if (e.kind === 'seq' && e.from === n.id && receiving(e.to)) startLike.add(e.to);
-  }
-  const triggers: Array<{ from: string; to: string; fromPool: string; toPool: string }> = [];
-  for (const e of g.edges) {
-    if (e.kind !== 'msg' || e.fromPool || e.toPool || !startLike.has(e.to)) continue;
-    const fp = poolOf(e.from);
-    const tp = poolOf(e.to);
-    if (fp === undefined || tp === undefined || fp === tp) continue;
-    triggers.push({ from: e.from, to: e.to, fromPool: fp, toPool: tp });
-  }
-  if (triggers.length === 0) return;
-  // プール間トリガ関係の位相順(Kahn)。残ったプールは循環に属するので動かさない
-  const pools = [...new Set(triggers.flatMap((t) => [t.fromPool, t.toPool]))];
-  const indeg = new Map(pools.map((p) => [p, 0]));
-  for (const t of triggers) indeg.set(t.toPool, (indeg.get(t.toPool) ?? 0) + 1);
-  const order: string[] = [];
-  const queue = pools.filter((p) => indeg.get(p) === 0).sort();
-  while (queue.length > 0) {
-    const p = queue.shift()!;
-    order.push(p);
-    for (const t of triggers.filter((t) => t.fromPool === p)) {
-      const d = (indeg.get(t.toPool) ?? 0) - 1;
-      indeg.set(t.toPool, d);
-      if (d === 0) queue.push(t.toPool);
-    }
-    queue.sort();
-  }
-  for (const pool of order) {
-    let shift = 0;
-    for (const t of triggers) {
-      if (t.toPool !== pool || !order.includes(t.fromPool)) continue;
-      shift = Math.max(shift, (col.get(t.from) ?? 0) - (col.get(t.to) ?? 0));
-    }
-    if (shift <= 0) continue;
-    // プールの全ノードを一律に動かす。文書だけ残すとチェーン連結が前提にする列の単調性が
-    // 壊れ、同じセルに 2 ノードが乗る(fuzz seed 1798)。プール越えの関連が逆向きになる
-    // ことはあるが、プール間の時間軸は独立なので順序の不変条件は元々成り立たない。
-    for (const n of g.nodes) {
-      if (poolOfLane.get(n.lane) !== pool) continue;
-      col.set(n.id, (col.get(n.id) ?? 0) + shift);
-    }
+    const succ = g.edges.filter((e) => e.kind === 'seq' && e.from === n.id).map((e) => col.get(e.to) ?? 0);
+    if (succ.length === 0) continue;
+    const target = Math.min(...succ) - 1;
+    if (target > (col.get(n.id) ?? 0)) col.set(n.id, target);
   }
 }
 
