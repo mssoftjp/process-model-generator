@@ -109,3 +109,15 @@ describe('交差原因診断', () => {
     expect(baseline.trackOrderInversions).toBeLessThanOrEqual(baseline.rawIntersections);
   });
 });
+
+describe('bend quality proxies', () => {
+  it('measures excess bends against the port-pair minimum and counts detours', () => {
+    const straight = hopEdge('s', [{ x: 0, y: 10 }, { x: 100, y: 10 }]);
+    const l = hopEdge('l', [{ x: 0, y: 10 }, { x: 60, y: 10 }, { x: 60, y: 50 }]);
+    const hook = hopEdge('h', [{ x: 0, y: 50 }, { x: 20, y: 50 }, { x: 20, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 30 }]);
+    const report = diagnoseCrossingCauses(geom([straight, l, hook]));
+    expect(report.bends).toBe(4);
+    expect(report.excessBends).toBe(2); // フックは 1 折れで済むポート対に 3 折れ
+    expect(report.detourEdges).toBe(1); // フックは対象より上へ回り込んでから戻る
+  });
+});

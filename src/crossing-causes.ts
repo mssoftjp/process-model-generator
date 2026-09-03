@@ -24,6 +24,10 @@ export interface CrossingCauseReport {
   labelAmbiguous: number;
   labelFar: number;
   bends: number;
+  // ポート対(出口軸・入口軸)から決まる最小折れ数に対する超過。「無駄な折れ」の代理指標
+  excessBends: number;
+  // 非戻り辺のうち、始点→終点の正味方向に対してどちらかの軸で逆走する区間を持つ辺(回り込み)
+  detourEdges: number;
   length: number;
   area: number;
 }
@@ -72,9 +76,13 @@ export function diagnoseCrossingCauses(geometry: Geometry, plan?: RoutePlan): Cr
   let bends = 0;
   let length = 0;
   let labelFar = 0;
+  let excessBends = 0;
+  let detourEdges = 0;
   for (const e of geometry.edges) {
     hops += e.hops?.length ?? 0;
     bends += Math.max(0, e.points.length - 2);
+    excessBends += Math.max(0, Math.max(0, e.points.length - 2) - minimumBends(e.points));
+    if (!e.isReturn && hasDetour(e.points)) detourEdges++;
     for (let i = 0; i + 1 < e.points.length; i++) {
       const a = e.points[i]!;
       const b = e.points[i + 1]!;
@@ -122,9 +130,38 @@ export function diagnoseCrossingCauses(geometry: Geometry, plan?: RoutePlan): Cr
     labelAmbiguous: labels.ambiguous,
     labelFar,
     bends,
+    excessBends,
+    detourEdges,
     length,
     area: geometry.width * geometry.height,
   };
+}
+
+/** 出口区間と入口区間の軸から決まる最小折れ数(同軸で揃っていれば 0、同軸でずれていれば 2、異軸なら 1) */
+export function minimumBends(points: Pt[]): number {
+  if (points.length < 2) return 0;
+  const a = points[0]!;
+  const b = points.at(-1)!;
+  const exitH = isHorizontal(a, points[1]!);
+  const entryH = isHorizontal(points.at(-2)!, b);
+  if (exitH !== entryH) return 1;
+  const aligned = exitH ? Math.abs(a.y - b.y) < 0.5 : Math.abs(a.x - b.x) < 0.5;
+  return aligned ? 0 : 2;
+}
+
+/** 始点→終点の正味方向に対して、どちらかの軸で逆走する区間があるか */
+export function hasDetour(points: Pt[]): boolean {
+  if (points.length < 2) return false;
+  const a = points[0]!;
+  const b = points.at(-1)!;
+  for (const axis of ['x', 'y'] as const) {
+    const dir = Math.sign(b[axis] - a[axis]);
+    for (let i = 1; i < points.length; i++) {
+      const step = points[i]![axis] - points[i - 1]![axis];
+      if (dir === 0 ? Math.abs(step) > 0.5 : step * dir < -0.5) return true;
+    }
+  }
+  return false;
 }
 
 export function compareDeclarationOrder(

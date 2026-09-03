@@ -2084,10 +2084,10 @@ function separateSharedEntries(ctx, plans) {
           add2(e.to, plan.toSide, "y", { plan, end: "to" });
         }
       }
-      if (ctx.nodeById.get(e.from)?.kind === "task" && plan.fromSide === "bottom") {
+      if (ctx.nodeById.get(e.from)?.kind === "task" && (plan.fromSide === "bottom" || plan.fromSide === "top")) {
         const a = plan.points[0]?.x, b = plan.points[1]?.x;
         if (a?.t === "nodeCX" && b?.t === "nodeCX" && a.id === e.from && b.id === e.from) {
-          add2(e.from, "bottom", "x", { plan, end: "from" });
+          add2(e.from, plan.fromSide, "x", { plan, end: "from" });
         }
       }
     }
@@ -2299,21 +2299,26 @@ function colRunEnd(e, side) {
   if (side === "from") return e.fromPool ? `#pool:${e.fromPool}` : e.from;
   return e.toPool ? `#pool:${e.toPool}` : e.to;
 }
-function reserveColRun(ctx, col, a, b, e, from = colRunEnd(e, "from")) {
+function reserveColRun(ctx, col, a, b, e, from = colRunEnd(e, "from"), shareFace) {
   const to = colRunEnd(e, "to");
-  if (!canReserveColRun(ctx, col, a, b, from, to)) return false;
+  if (!canReserveColRun(ctx, col, a, b, from, to, shareFace)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   const runs = ctx.colRuns.get(col) ?? [];
   runs.push({ a: lo, b: hi, from, to });
   ctx.colRuns.set(col, runs);
   return true;
 }
-function canReserveColRun(ctx, col, a, b, from, to) {
+function canReserveColRun(ctx, col, a, b, from, to, shareFace) {
   if (!columnClear(ctx, col, a, b)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   return !(ctx.colRuns.get(col) ?? []).some(
-    (r) => r.from !== from && r.to !== to && r.a < hi && lo < r.b
+    (r) => r.from !== from && r.to !== to && r.a < hi && lo < r.b && !(shareFace !== void 0 && !r.exclusive && (r.from === shareFace || r.to === shareFace))
   );
+}
+function markExclusiveColRun(ctx, col) {
+  const runs = ctx.colRuns.get(col);
+  const last = runs?.at(-1);
+  if (last) last.exclusive = true;
 }
 function canReserveRowRun(ctx, lane, row, a, b, from, to) {
   const [lo, hi] = a < b ? [a, b] : [b, a];
@@ -2408,6 +2413,20 @@ function topFree(ctx, u) {
   }
   return true;
 }
+function faceQuiet(ctx, nodeId, e) {
+  return !ctx.g.edges.some((o) => o.id !== e.id && (o.to === nodeId && (o.kind !== "seq" || o.isReturn || !!o.fromPool) || o.from === nodeId && o.kind !== "seq"));
+}
+function topUsersSlottable(ctx, u) {
+  for (const e2 of ctx.g.edges) {
+    if (e2.to !== u.node.id) continue;
+    if (e2.kind === "seq" && (e2.isReturn || isGw(u.node) && !sameRowSource(ctx, e2, u))) return false;
+  }
+  return true;
+}
+function sameRowSource(ctx, e2, u) {
+  const s = ctx.nodeById.get(e2.from);
+  return !!s && s.lane === u.lane && ctx.p.row.get(s.id) === u.row;
+}
 function noteLabelNeed(ctx, e, gi) {
   if (!e.label) return;
   const w = measureText(e.label, EDGE_FONT_SIZE) + 12;
@@ -2423,6 +2442,7 @@ function planForward(ctx, e) {
   const rowFreeWide = rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`);
   if (e.kind === "assoc") {
     if (u.col === v.col && gV > gU && reserveColRun(ctx, u.col, gU, gV, e)) {
+      markExclusiveColRun(ctx, u.col);
       return {
         edgeId: e.id,
         fromSide: "bottom",
@@ -2502,6 +2522,7 @@ function planForward(ctx, e) {
     const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
     if (gV > gU && bottomFree(u.node)) {
       if (u.col === v.col && reserveColRun(ctx, u.col, gU, gV, e)) {
+        markExclusiveColRun(ctx, u.col);
         return {
           edgeId: e.id,
           fromSide: "bottom",
@@ -2617,6 +2638,20 @@ function planForward(ctx, e) {
         ]
       };
     }
+  }
+  if (ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) && topFree(ctx, u) && rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) && reserveColRun(ctx, u.col, gV, gU, e)) {
+    noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
+    return {
+      edgeId: e.id,
+      fromSide: "top",
+      toSide: "left",
+      pattern: "rise",
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, "top") },
+        { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
+        { x: portX(e.to, "left"), y: portY(e.to, "left") }
+      ]
+    };
   }
   if (ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && topFree(ctx, u) && rowFreeWide) {
     const chU = ctx.globalChannel.get(rowKey(u.lane, u.row));
@@ -2829,6 +2864,7 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
   const otherMsg = (id) => ctx.g.edges.some((o) => o.id !== e.id && o.kind === "msg" && (o.from === id || o.to === id));
   if (isGw(u.node) && otherMsg(u.node.id) || isGw(v.node) && otherMsg(v.node.id)) return void 0;
   const bottomLabelFree = (n) => bottomFree(n) || eventLabelMovedUp(ctx, n.id);
+  const slotted = (n) => n.kind === "task";
   const fromSide = down ? "bottom" : "top";
   const toSide = down ? "top" : "bottom";
   if (down) {
@@ -2836,18 +2872,25 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
     if (isGw(u.node) && !bottomOutFree(ctx, u, gU)) return void 0;
     if (eventLabelMovedUp(ctx, v.node.id)) return void 0;
   } else {
-    if (!topFree(ctx, u)) return void 0;
+    if (!topFree(ctx, u) && !(slotted(u.node) && topUsersSlottable(ctx, u))) return void 0;
+    if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return void 0;
     if (!bottomLabelFree(v.node)) return void 0;
-    if (v.node.kind !== "task" && eventHasBottomOut(ctx, v.node.id)) return void 0;
+    if (v.node.kind !== "task" && eventHasBottomOut(ctx, v.node.id) && !isEventKind(v.node.kind)) return void 0;
     if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return void 0;
   }
   const senderEnd = down ? gapPos + 0.5 : gapPos - 0.5;
   const receiverStart = down ? gapPos - 0.5 : gapPos + 0.5;
-  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to)) return void 0;
-  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to)) return void 0;
-  reserveColRun(ctx, u.col, gU, senderEnd, e);
-  reserveColRun(ctx, v.col, receiverStart, gV, e);
-  if (u.col === v.col) {
+  const straight = u.col === v.col;
+  if (straight && !(faceQuiet(ctx, u.node.id, e) && faceQuiet(ctx, v.node.id, e))) return void 0;
+  const shareU = !straight && slotted(u.node) ? u.node.id : void 0;
+  const shareV = !straight && slotted(v.node) ? v.node.id : void 0;
+  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to, shareU)) return void 0;
+  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to, shareV)) return void 0;
+  reserveColRun(ctx, u.col, gU, senderEnd, e, e.from, shareU);
+  if (straight) markExclusiveColRun(ctx, u.col);
+  reserveColRun(ctx, v.col, receiverStart, gV, e, e.from, shareV);
+  if (straight) markExclusiveColRun(ctx, v.col);
+  if (straight) {
     return {
       edgeId: e.id,
       fromSide,
@@ -3037,7 +3080,8 @@ function planIntoTop(ctx, e, u, v, gU) {
 }
 function planRowThenColumn(ctx, e, u, v, gU, gV) {
   if (gU === gV || v.col <= u.col) return void 0;
-  if (isGw(u.node) || isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return void 0;
+  if (isGw(u.node) && !e.onSpine) return void 0;
+  if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return void 0;
   if (isDocLike(v.node.kind)) return void 0;
   if (nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col)) return void 0;
   const fromBelow = gU > gV;
@@ -3306,6 +3350,21 @@ function planReturn(ctx, e) {
   }
   const chV = ctx.globalChannel.get(rowKey(v.lane, v.row));
   if (chV === gU - 1 && !isAttachedBoundary(u.node) && topFree(ctx, u) && reserveColRun(ctx, u.col, chV, gU, e)) {
+    const t2 = allocChannel(ctx, v.lane, v.row, v.col, u.col, "below", gU, u.col);
+    return {
+      edgeId: e.id,
+      fromSide: "top",
+      toSide: "top",
+      pattern: "return",
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, "top") },
+        { x: nodeCX(e.from), y: channelY(v.lane, v.row, t2) },
+        { x: nodeCX(e.to), y: channelY(v.lane, v.row, t2) },
+        { x: nodeCX(e.to), y: portY(e.to, "top") }
+      ]
+    };
+  }
+  if (ctx.optimizeReadability && e.kind === "seq" && chV < gU && !isAttachedBoundary(u.node) && topFree(ctx, u) && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) && !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) && reserveColRun(ctx, u.col, chV, gU, e)) {
     const t2 = allocChannel(ctx, v.lane, v.row, v.col, u.col, "below", gU, u.col);
     return {
       edgeId: e.id,

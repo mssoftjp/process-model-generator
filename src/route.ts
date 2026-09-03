@@ -7,6 +7,7 @@
 //   row-column       行先行 L: 自行の基線を対象列まで直進し、対象列中心を縦走して上/下頂点に入る
 //                    (合流ゲートウェイへの行違い入り・文書→工程の関連。予約が成立するときだけ)
 //   drop             ゲートウェイの下方向分岐で自列が空いている: 真下へ進み対象行で曲がって左から入る
+//   rise             drop の鏡像(上方向分岐、改善候補のみ): 真上へ昇り対象行で曲がって左から入る
 //   row-approach     出口右の溝を垂直移動して対象行の基線に乗り、左から入る
 //   channel-approach 対象行の上チャネルを経由する完全迂回(常に合法な最終手段)。
 //                    対象がゲートウェイなら上頂点に入る
@@ -53,7 +54,8 @@ interface Ctx {
   // 列中心の縦走行(drop・メッセージの縦出し)。チャネルで終わる縦線は端点ノードの
   // 相互保護が効かないため、明示レジストリで重なりを断つ。
   // 同一始点は幹線共有、同一終点は O-6 と同じ収束共有（タスク入口は後段で分離）。
-  colRuns: Map<number, Array<{ a: number; b: number; from: string; to: string }>>;
+  // exclusive: 2 点の一直線など、後段のスロット分離を受けない走行。面共有の対象外。
+  colRuns: Map<number, Array<{ a: number; b: number; from: string; to: string; exclusive?: boolean }>>;
   // 行基線の水平走行(direct・drop・row/channel-approach の基線区間)。列スケール
   // (列 c = c、溝 g = g - 0.5)。S-36 の「ノードで終わる」相互保護を明示予約に置き換え、
   // 列中心で終わる水平(行先行 L)も同じ規則で安全に扱う。共有規則は colRuns と同じ。
@@ -154,10 +156,13 @@ function separateSharedEntries(ctx: Ctx, plans: EdgePlan[]): void {
           add(e.to, plan.toSide, 'y', { plan, end: 'to' });
         }
       }
-      if (ctx.nodeById.get(e.from)?.kind === 'task' && plan.fromSide === 'bottom') {
+      if (
+        ctx.nodeById.get(e.from)?.kind === 'task' &&
+        (plan.fromSide === 'bottom' || plan.fromSide === 'top')
+      ) {
         const a = plan.points[0]?.x, b = plan.points[1]?.x;
         if (a?.t === 'nodeCX' && b?.t === 'nodeCX' && a.id === e.from && b.id === e.from) {
-          add(e.from, 'bottom', 'x', { plan, end: 'from' });
+          add(e.from, plan.fromSide, 'x', { plan, end: 'from' });
         }
       }
     }
@@ -424,9 +429,10 @@ function colRunEnd(e: NormEdge, side: 'from' | 'to'): string {
  */
 function reserveColRun(
   ctx: Ctx, col: number, a: number, b: number, e: NormEdge, from = colRunEnd(e, 'from'),
+  shareFace?: string,
 ): boolean {
   const to = colRunEnd(e, 'to');
-  if (!canReserveColRun(ctx, col, a, b, from, to)) return false;
+  if (!canReserveColRun(ctx, col, a, b, from, to, shareFace)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   const runs = ctx.colRuns.get(col) ?? [];
   runs.push({ a: lo, b: hi, from, to });
@@ -434,14 +440,28 @@ function reserveColRun(
   return true;
 }
 
+/**
+ * shareFace: このノードの上下面に着く/発つ走行とは重なってよい。後段の
+ * separateSharedEntries が同じ面の非 seq 線をスロットへ分けるので、実座標では
+ * 平行線として離れる(往復メッセージ対の型)。タスクとイベントだけに使う。
+ */
 function canReserveColRun(
-  ctx: Ctx, col: number, a: number, b: number, from: string, to: string,
+  ctx: Ctx, col: number, a: number, b: number, from: string, to: string, shareFace?: string,
 ): boolean {
   if (!columnClear(ctx, col, a, b)) return false;
   const [lo, hi] = a < b ? [a, b] : [b, a];
   return !(ctx.colRuns.get(col) ?? []).some(
-    (r) => r.from !== from && r.to !== to && r.a < hi && lo < r.b,
+    (r) =>
+      r.from !== from && r.to !== to && r.a < hi && lo < r.b &&
+      !(shareFace !== undefined && !r.exclusive && (r.from === shareFace || r.to === shareFace)),
   );
+}
+
+/** 直前に予約した列走行を排他にする(2 点の一直線はスロット分離されないため面共有できない)。 */
+function markExclusiveColRun(ctx: Ctx, col: number): void {
+  const runs = ctx.colRuns.get(col);
+  const last = runs?.at(-1);
+  if (last) last.exclusive = true;
 }
 
 /** 行基線の水平区間を予約できるか(列スケール。同一始点・同一終点は共有可)。 */
@@ -594,6 +614,29 @@ function topFree(ctx: Ctx, u: Cell): boolean {
   return true;
 }
 
+/** ノードの上下面を使い得る他の辺(非 seq の出入り・戻り・プール発)が無いか。 */
+function faceQuiet(ctx: Ctx, nodeId: string, e: NormEdge): boolean {
+  return !ctx.g.edges.some((o) =>
+    o.id !== e.id && (
+      (o.to === nodeId && (o.kind !== 'seq' || o.isReturn || !!o.fromPool)) ||
+      (o.from === nodeId && o.kind !== 'seq')
+    ));
+}
+
+/** u の上面を使う入りが全て非 seq(スロット分離の対象)か。戻り seq や行違いゲートウェイ入りがあれば false。 */
+function topUsersSlottable(ctx: Ctx, u: Cell): boolean {
+  for (const e2 of ctx.g.edges) {
+    if (e2.to !== u.node.id) continue;
+    if (e2.kind === 'seq' && (e2.isReturn || (isGw(u.node) && !sameRowSource(ctx, e2, u)))) return false;
+  }
+  return true;
+}
+
+function sameRowSource(ctx: Ctx, e2: NormEdge, u: Cell): boolean {
+  const s = ctx.nodeById.get(e2.from);
+  return !!s && s.lane === u.lane && ctx.p.row.get(s.id) === u.row;
+}
+
 function noteLabelNeed(ctx: Ctx, e: NormEdge, gi: number): void {
   if (!e.label) return;
   const w = measureText(e.label, EDGE_FONT_SIZE) + 12;
@@ -615,6 +658,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   if (e.kind === 'assoc') {
     // 同列の直落とし(帳票フローの型): 書類は工程の真下に落ち、真下の工程に真上から読まれる
     if (u.col === v.col && gV > gU && reserveColRun(ctx, u.col, gU, gV, e)) {
+      markExclusiveColRun(ctx, u.col);
       return {
         edgeId: e.id, fromSide: 'bottom', toSide: 'top', pattern: 'drop',
         points: [
@@ -712,6 +756,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     const chV = ctx.globalChannel.get(rowKey(v.lane, v.row))!;
     if (gV > gU && bottomFree(u.node)) {
       if (u.col === v.col && reserveColRun(ctx, u.col, gU, gV, e)) {
+        markExclusiveColRun(ctx, u.col);
         return {
           edgeId: e.id, fromSide: 'bottom', toSide: 'top', pattern: 'drop',
           points: [
@@ -833,6 +878,25 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
         ],
       };
     }
+  }
+
+  // rise: drop の鏡像。上側の非本流分岐で自列が対象行まで空いていれば、north から
+  // 自列中心を昇り、対象行で曲がって左から入る(1 折れ)。
+  if (
+    ctx.optimizeReadability && isGw(u.node) && !e.onSpine && gV < gU && !isGw(v.node) &&
+    topFree(ctx, u) && rowFree && !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    canReserveRowRun(ctx, v.lane, v.row, u.col, v.col, e.from, e.to) &&
+    reserveColRun(ctx, u.col, gV, gU, e)
+  ) {
+    noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
+    return {
+      edgeId: e.id, fromSide: 'top', toSide: 'left', pattern: 'rise',
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, 'top') },
+        { x: nodeCX(e.from), y: rowMidY(v.lane, v.row) },
+        { x: portX(e.to, 'left'), y: portY(e.to, 'left') },
+      ],
+    };
   }
 
   // 上側の非本流分岐は north から出す（main の east と共有しない）
@@ -1097,6 +1161,10 @@ function planAcrossPoolGapZ(
   // ゲートウェイの上下頂点は後段でスロット分離されない。他の通信があれば側面経路に任せる
   if ((isGw(u.node) && otherMsg(u.node.id)) || (isGw(v.node) && otherMsg(v.node.id))) return undefined;
   const bottomLabelFree = (n: NormNode) => bottomFree(n) || eventLabelMovedUp(ctx, n.id);
+  // タスクとイベントの上下面は separateSharedEntries がスロットへ分けるので、
+  // 同じ面に着く他の通信(往復対)と列を共有できる。ゲートウェイは分けられない。
+  // イベントは入口だけがスロット分離され出口は分けられないため、タスクに限る
+  const slotted = (n: NormNode) => n.kind === 'task';
   const fromSide: PortSide = down ? 'bottom' : 'top';
   const toSide: PortSide = down ? 'top' : 'bottom';
   if (down) {
@@ -1104,20 +1172,31 @@ function planAcrossPoolGapZ(
     if (isGw(u.node) && !bottomOutFree(ctx, u, gU)) return undefined;
     if (eventLabelMovedUp(ctx, v.node.id)) return undefined; // 上辺にラベル
   } else {
-    if (!topFree(ctx, u)) return undefined;
+    // 上面を使う入りが全て非 seq(スロット分離される)なら、タスク/イベントは top から出せる
+    if (!topFree(ctx, u) && !(slotted(u.node) && topUsersSlottable(ctx, u))) return undefined;
+    if (isEventKind(u.node.kind) && eventLabelMovedUp(ctx, u.node.id)) return undefined;
     if (!bottomLabelFree(v.node)) return undefined;
-    if (v.node.kind !== 'task' && eventHasBottomOut(ctx, v.node.id)) return undefined;
+    if (v.node.kind !== 'task' && eventHasBottomOut(ctx, v.node.id) && !isEventKind(v.node.kind)) return undefined;
     if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return undefined;
   }
   // 回廊は帯であり離散位置 gapPos では厚みが見えない。反対側の縦線と帯の中で重なるのを
   // 防ぐため、予約区間を回廊の向こう側まで 0.5 伸ばす(チャネル終端の隣接セル条件と同型)。
   const senderEnd = down ? gapPos + 0.5 : gapPos - 0.5;
   const receiverStart = down ? gapPos - 0.5 : gapPos + 0.5;
-  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to)) return undefined;
-  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to)) return undefined;
-  reserveColRun(ctx, u.col, gU, senderEnd, e);
-  reserveColRun(ctx, v.col, receiverStart, gV, e);
-  if (u.col === v.col) {
+  // 同列の一直線(2 点)はスロット分離の対象にならないので、面共有なしで列を占有できるときだけ。
+  // さらに、チャネルから頂点へ降りる終端(planIntoTop 系)は列予約を持たないため、
+  // 両端の面に他の非 seq の出入りが一切ないことを静的に要求する。
+  const straight = u.col === v.col;
+  if (straight && !(faceQuiet(ctx, u.node.id, e) && faceQuiet(ctx, v.node.id, e))) return undefined;
+  const shareU = !straight && slotted(u.node) ? u.node.id : undefined;
+  const shareV = !straight && slotted(v.node) ? v.node.id : undefined;
+  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to, shareU)) return undefined;
+  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to, shareV)) return undefined;
+  reserveColRun(ctx, u.col, gU, senderEnd, e, e.from, shareU);
+  if (straight) markExclusiveColRun(ctx, u.col);
+  reserveColRun(ctx, v.col, receiverStart, gV, e, e.from, shareV);
+  if (straight) markExclusiveColRun(ctx, v.col);
+  if (straight) {
     return {
       edgeId: e.id, fromSide, toSide, pattern: 'drop',
       points: [
@@ -1327,7 +1406,9 @@ function planRowThenColumn(
   ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number, gV: number,
 ): EdgePlan | undefined {
   if (gU === gV || v.col <= u.col) return undefined;
-  if (isGw(u.node) || isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return undefined;
+  // ゲートウェイ発は本流(東出し。S-50)だけ。非本流は上下頂点の文法に従う
+  if (isGw(u.node) && !e.onSpine) return undefined;
+  if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return undefined;
   if (isDocLike(v.node.kind)) return undefined;
   if (nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col)) return undefined;
   const fromBelow = gU > gV;
@@ -1576,6 +1657,28 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
   if (
     chV === gU - 1 && !isAttachedBoundary(u.node) &&
     topFree(ctx, u) && reserveColRun(ctx, u.col, chV, gU, e)
+  ) {
+    const t = allocChannel(ctx, v.lane, v.row, v.col, u.col, 'below', gU, u.col);
+    return {
+      edgeId: e.id, fromSide: 'top', toSide: 'top', pattern: 'return',
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, 'top') },
+        { x: nodeCX(e.from), y: channelY(v.lane, v.row, t) },
+        { x: nodeCX(e.to), y: channelY(v.lane, v.row, t) },
+        { x: nodeCX(e.to), y: portY(e.to, 'top') },
+      ],
+    };
+  }
+  // 行違い戻り(改善候補のみ): top が空いていて自列中心を対象上チャネルまで昇れるなら、
+  // 右溝の昇りを省いて north から直接出る(2 折れ)。基準系には入れない(cycle1 で
+  // 基準系に入れると keihi の申請者レーンで上チャネル全幅逆走が勝つことが確認済み)。
+  // 非 seq の戻り(書き戻しの関連など)は S-57 の +10 帯で右溝へ出す C2 規則を保つ。
+  if (
+    ctx.optimizeReadability && e.kind === 'seq' && chV < gU && !isAttachedBoundary(u.node) &&
+    topFree(ctx, u) &&
+    !ctx.occupied.has(`${v.lane}:${v.row}:${u.col}`) &&
+    !(v.row > 0 && ctx.occupied.has(`${v.lane}:${v.row - 1}:${u.col}`)) &&
+    reserveColRun(ctx, u.col, chV, gU, e)
   ) {
     const t = allocChannel(ctx, v.lane, v.row, v.col, u.col, 'below', gU, u.col);
     return {

@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L20
+# Layout Evolution, L1–L21
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -149,6 +149,25 @@ The accepted rules, in the order they were verified:
 Fuzzing found one new hole in the Z: two verticals arriving at the same column from opposite sides of the corridor touch in the discrete model but overlap inside the corridor band once tracks are assigned. Extending each reservation half a position across the corridor closed it, the same remedy as the channel-terminal cell condition of L11.
 
 Outcome: bends 534 → 437, crossing hops 72 → 64, no diagram worse on any metric, and the 2,000-seed fuzz violation set identical to the previous release. O-10 was relaxed to admit the same-column single vertical, and the S-57 test now checks for the absence of a short stub rather than for a horizontal exit.
+
+## L21 — Finish the one-bend family and measure the residue (2026-09-03)
+
+After L20 the residual excess bends sat in four places: main-path edges leaving a gateway east into a join on another row, upward non-main gateway branches routed through the channel and gutter, cross-row returns climbing the right gutter, and request/reply message pairs refused by the column registry although slot separation would have kept them apart.
+
+Accepted:
+
+- `row-column` extended to main-path gateway sources (east exit is already the S-50 grammar);
+- `rise`, the upward mirror of `drop`, in the improved candidate;
+- a north exit for cross-row sequence returns in the improved candidate only, since L19-era evidence showed the baseline choosing a full-width reverse run when given this freedom;
+- task-face sharing in the column registry for messages, with two-point straight runs marked exclusive after fuzzing found a request and a reply coinciding exactly; and
+- `excessBends` and `detourEdges` in the crossing-cause report, the proxies used to find the residue.
+
+Rejected after measurement:
+
+- moving annotations off gateway columns in placement: it freed one gateway drop but pushed the annotation under its task, where it blocked the document bus into that task (hops +3, detours +6 for bends −3); and
+- returning documents that have readers to their writer's column: fuzzing produced dozens of associations through node interiors because the row is not known when the column is decided.
+
+Outcome: bends 437 → 414, detours 31 → 28, hops 64 → 65 (one figure trades two bends for one hop), no other figure worse, and the 2,000-seed fuzz violation set again identical to v0.2.19.
 
 ## Open items retained from the loops
 
