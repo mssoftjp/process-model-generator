@@ -4,10 +4,7 @@
 import { readFileSync as readFileSync2, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-// src/types.ts
-var isDocLike = (k) => k === "doc" || k === "store" || k === "note" || k === "group";
-
-// src/bpmn.ts
+// src/bpmn-kinds.ts
 var EVENT_TRIGGERS = [
   "none",
   "message",
@@ -108,6 +105,20 @@ function isThrowEvent(n) {
   if (n.kind === "mid") return n.eventThrow === true;
   return false;
 }
+function hasBottomActivityMarker(n) {
+  if (n.loop || n.compensation || n.adhoc) return true;
+  if (n.subtype === "sub" || n.subtype === "transaction" || n.subtype === "eventSub") return true;
+  if (n.subtype === "call" && n.callProcess !== false) return true;
+  return false;
+}
+function hasTopTaskIcon(n) {
+  if (n.subtype === "call" && n.callProcess === false && n.callTaskType) return true;
+  if (n.subtype === "eventSub" && n.eventSubTrigger) return true;
+  const s = n.subtype;
+  return s === "user" || s === "service" || s === "rule" || s === "script" || s === "send" || s === "receive" || s === "manual";
+}
+
+// src/bpmn-interpret.ts
 var KIND_ALIASES = {
   task: "task",
   xor: "xor",
@@ -350,14 +361,39 @@ function legalEvent(slot, trigger, interrupting) {
   }
   return LEGAL_EVENT[slot].includes(trigger);
 }
+
+// src/types.ts
+var isDocLike = (k) => k === "doc" || k === "store" || k === "note" || k === "group";
+
+// src/pools.ts
+function buildPoolIndex(g) {
+  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const index = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const laneOfNode = new Map(g.nodes.map((n) => [n.id, n.lane]));
+  const poolOfNode = (id) => {
+    const lane = laneOfNode.get(id);
+    return lane === void 0 ? void 0 : poolOfLane.get(lane);
+  };
+  const indexOf = (pool) => pool === void 0 ? void 0 : index.get(pool);
+  return {
+    poolOfLane: (laneId) => poolOfLane.get(laneId),
+    poolOfNode,
+    indexOf,
+    indexOfNode: (id) => indexOf(poolOfNode(id)),
+    adjacent: (a, b) => {
+      const ia = indexOf(a);
+      const ib = indexOf(b);
+      return ia !== void 0 && ib !== void 0 && Math.abs(ia - ib) === 1;
+    },
+    size: g.pools.length
+  };
+}
+
+// src/validate-ir.ts
 function validateIr(ir) {
   const out = [];
   const byId = new Map(ir.nodes.map((n) => [n.id, n]));
-  const lanePool = new Map(ir.lanes.map((lane) => [lane.id, lane.pool]));
-  const poolOfNode = (id) => {
-    const node = byId.get(id);
-    return node ? lanePool.get(node.lane) : void 0;
-  };
+  const poolOfNode = buildPoolIndex(ir).poolOfNode;
   for (const lane of ir.lanes) {
     const match = /^(.*?)\s*[（(][^()（）]+[)）]\s*$/u.exec(lane.label);
     const base = match?.[1]?.trim();
@@ -693,52 +729,14 @@ function applyStrictSemantics(diags, strict2) {
     return d;
   });
 }
-function hasBottomActivityMarker(n) {
-  if (n.loop || n.compensation || n.adhoc) return true;
-  if (n.subtype === "sub" || n.subtype === "transaction" || n.subtype === "eventSub") return true;
-  if (n.subtype === "call" && n.callProcess !== false) return true;
-  return false;
-}
-function hasTopTaskIcon(n) {
-  if (n.subtype === "call" && n.callProcess === false && n.callTaskType) return true;
-  if (n.subtype === "eventSub" && n.eventSubTrigger) return true;
-  const s = n.subtype;
-  return s === "user" || s === "service" || s === "rule" || s === "script" || s === "send" || s === "receive" || s === "manual";
-}
 
 // src/message-labels.ts
-function boundaryTopEvents(g) {
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const idxOfNode = (id) => {
-    const n = nodeById.get(id);
-    return n ? poolIndex.get(poolOfLane.get(n.lane) ?? "") : void 0;
-  };
-  const out = /* @__PURE__ */ new Set();
-  for (const n of g.nodes) {
-    if (!isAttachedBoundary(n)) continue;
-    const own = poolIndex.get(poolOfLane.get(n.lane) ?? "");
-    if (own === void 0) continue;
-    const fromAbove = g.edges.some((e) => {
-      if (e.kind !== "msg" || e.to !== n.id) return false;
-      const from = e.fromPool ? poolIndex.get(e.fromPool) : idxOfNode(e.from);
-      return from !== void 0 && from < own;
-    });
-    if (fromAbove) out.add(n.id);
-  }
-  return out;
-}
 function crossMinusLabelEvents(g) {
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
+  const pools = buildPoolIndex(g);
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const out = /* @__PURE__ */ new Set();
-  const poolIdx = (id) => id === void 0 ? void 0 : poolIndex.get(id);
-  const nodePoolIdx = (id) => {
-    const n = nodeById.get(id);
-    return n ? poolIdx(poolOfLane.get(n.lane)) : void 0;
-  };
+  const poolIdx = (id) => pools.indexOf(id);
+  const nodePoolIdx = (id) => pools.indexOfNode(id);
   for (const e of g.edges) {
     if (e.kind !== "msg") continue;
     if (e.fromPool) {
@@ -757,8 +755,8 @@ function crossMinusLabelEvents(g) {
     }
     const u = nodeById.get(e.from);
     const v = nodeById.get(e.to);
-    const ui = u ? poolIdx(poolOfLane.get(u.lane)) : void 0;
-    const vi = v ? poolIdx(poolOfLane.get(v.lane)) : void 0;
+    const ui = u ? pools.indexOf(pools.poolOfLane(u.lane)) : void 0;
+    const vi = v ? pools.indexOf(pools.poolOfLane(v.lane)) : void 0;
     if (ui === void 0 || vi === void 0 || Math.abs(ui - vi) !== 1) continue;
     if (ui < vi && u && isEventKind(u.kind)) out.add(u.id);
     if (vi < ui && v && isEventKind(v.kind)) out.add(v.id);
@@ -1274,14 +1272,14 @@ function normalize(ir, strict2 = false) {
     });
     report.push({ level: "info", code: "N-211", message: `\u5408\u6D41\u30FB\u5206\u5C90\u517C\u52D9 ${n.id} \u3092 ${join2.id} + ${n.id} \u306B\u5206\u96E2` });
   }
-  const poolOfLane = new Map(ir.lanes.map((l) => [l.id, l.pool]));
+  const pools = buildPoolIndex(ir);
   const processPools = [];
   for (const n of nodes) {
     if (isDocLike(n.kind)) continue;
-    const pool = poolOfLane.get(n.lane);
+    const pool = pools.poolOfLane(n.lane);
     if (!processPools.includes(pool)) processPools.push(pool);
   }
-  const inPool = (n, pool) => poolOfLane.get(n.lane) === pool;
+  const inPool = (n, pool) => pools.poolOfLane(n.lane) === pool;
   for (const pool of processPools) {
     const processNodes = nodes.filter((n) => !isDocLike(n.kind) && !isAttachedBoundary(n) && inPool(n, pool));
     const hasExplicitStart = processNodes.some((n) => n.kind === "start" && !n.synthetic);
@@ -1390,7 +1388,7 @@ function normalize(ir, strict2 = false) {
   const reachesEnd = nodesReachingEnd(nodes, edges);
   const firstByPool = /* @__PURE__ */ new Map();
   for (const start of starts) {
-    const pool = poolOfLane.get(start.lane) ?? "";
+    const pool = pools.poolOfLane(start.lane) ?? "";
     if (!firstByPool.has(pool)) firstByPool.set(pool, start);
   }
   for (const [pool, first] of firstByPool) {
@@ -1415,6 +1413,7 @@ function normalize(ir, strict2 = false) {
       message: `\u672C\u6D41\u3092\u9078\u6319(${pool || "default"}): ${path.join(" -> ")}`
     });
   }
+  assignBoundarySides(nodes, edges, ir);
   return { id: ir.id, title: ir.title, orientation: ir.orientation, pools: ir.pools, lanes: ir.lanes, nodes, edges, report };
 }
 var REPEAT_COL_GAP = 5;
@@ -1557,6 +1556,23 @@ function reaches(from, to, outAdj) {
     }
   }
   return false;
+}
+function assignBoundarySides(nodes, edges, ir) {
+  const pools = buildPoolIndex({ pools: ir.pools, lanes: ir.lanes, nodes });
+  for (const n of nodes) {
+    if (!isAttachedBoundary(n)) continue;
+    const own = pools.indexOfNode(n.id);
+    if (own === void 0) {
+      n.boundarySide = "bottom";
+      continue;
+    }
+    const fromAbove = edges.some((e) => {
+      if (e.kind !== "msg" || e.to !== n.id) return false;
+      const from = e.fromPool ? pools.indexOf(e.fromPool) : pools.indexOfNode(e.from);
+      return from !== void 0 && from < own;
+    });
+    n.boundarySide = fromAbove ? "top" : "bottom";
+  }
 }
 function electReturns(nodes, edges, report, strict2) {
   const docIds = new Set(nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
@@ -1754,13 +1770,13 @@ function boundaryExtent(n, orientation) {
     shift: BOUNDARY_LABEL_CLEAR + across / 2
   };
 }
-function measureNodes(nodes, labelCrossMinus = /* @__PURE__ */ new Set(), orientation = "horizontal", boundaryTop = /* @__PURE__ */ new Set()) {
+function measureNodes(nodes, labelCrossMinus = /* @__PURE__ */ new Set(), orientation = "horizontal") {
   const hanging = /* @__PURE__ */ new Map();
   for (const n of nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo) continue;
     const h = hanging.get(n.attachedTo) ?? { minus: 0, plus: 0, reach: 0 };
     const ext = boundaryExtent(n, orientation);
-    if (boundaryTop.has(n.id)) h.minus = Math.max(h.minus, ext.hang);
+    if (n.boundarySide === "top") h.minus = Math.max(h.minus, ext.hang);
     else h.plus = Math.max(h.plus, ext.hang);
     h.reach = Math.max(h.reach, ext.reach);
     hanging.set(n.attachedTo, h);
@@ -1771,7 +1787,7 @@ function measureNodes(nodes, labelCrossMinus = /* @__PURE__ */ new Set(), orient
     if (isAttachedBoundary(n)) {
       cell.labelSide = orientation === "vertical" ? "bottom" : "right";
       const { shift } = boundaryExtent(n, orientation);
-      cell.labelShift = boundaryTop.has(n.id) ? -shift : shift;
+      cell.labelShift = n.boundarySide === "top" ? -shift : shift;
     }
     cells2.set(n.id, cell);
   }
@@ -2077,9 +2093,8 @@ function alignMessageTiming(g, col, docIds) {
 }
 function separateStackedCorridors(g, col, active, floors, relax, anchor) {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
-  const poolIdx = (id) => poolIndex.get(poolOfLane.get(nodeById.get(id)?.lane ?? "") ?? "");
+  const pools = buildPoolIndex(g);
+  const poolIdx = (id) => pools.indexOfNode(id);
   const spine = (id) => nodeById.get(id)?.onSpine === true;
   const sameNodes = (a, b) => a.from === b.from && a.to === b.to || a.from === b.to && a.to === b.from;
   const tried = /* @__PURE__ */ new Set();
@@ -2117,23 +2132,22 @@ function separateStackedCorridors(g, col, active, floors, relax, anchor) {
 function keepDocsOffMessageCorridors(g, col, docIds) {
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
   const laneIndex = new Map(g.lanes.map((l, i) => [l.id, i]));
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   const corridors = /* @__PURE__ */ new Set();
   for (const e of g.edges) {
     if (e.kind !== "msg" || e.fromPool || e.toPool) continue;
     const u = nodeById.get(e.from);
     const v = nodeById.get(e.to);
     if (!u || !v || col.get(u.id) !== col.get(v.id)) continue;
-    const pu = poolIndex.get(poolOfLane.get(u.lane) ?? "");
-    const pv = poolIndex.get(poolOfLane.get(v.lane) ?? "");
+    const pu = pools.indexOf(pools.poolOfLane(u.lane));
+    const pv = pools.indexOf(pools.poolOfLane(v.lane));
     if (pu === void 0 || pv === void 0 || Math.abs(pu - pv) !== 1) continue;
     const c = col.get(u.id);
     const down = pu < pv;
     for (const [end, towardGap] of [[u, down], [v, !down]]) {
       const li = laneIndex.get(end.lane);
       for (const lane of g.lanes) {
-        if (poolOfLane.get(lane.id) !== poolOfLane.get(end.lane)) continue;
+        if (pools.poolOfLane(lane.id) !== pools.poolOfLane(end.lane)) continue;
         const i = laneIndex.get(lane.id);
         if (towardGap ? i >= li : i <= li) corridors.add(`${lane.id}:${c}`);
       }
@@ -2313,12 +2327,12 @@ function route(g, p, optimizeReadability = false, options) {
   const globalRow = /* @__PURE__ */ new Map();
   const globalChannel = /* @__PURE__ */ new Map();
   const globalPoolGap = /* @__PURE__ */ new Map();
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   let pos = 0;
   let prevPool = null;
   for (const lane of g.lanes) {
     if (prevPool !== null && lane.pool !== prevPool) {
-      const pi = poolIndex.get(prevPool);
+      const pi = pools.indexOf(prevPool);
       if (pi !== void 0) globalPoolGap.set(pi, pos++);
     }
     prevPool = lane.pool;
@@ -2346,8 +2360,8 @@ function route(g, p, optimizeReadability = false, options) {
     colRuns: /* @__PURE__ */ new Map(),
     rowRuns: /* @__PURE__ */ new Map(),
     stubRuns: /* @__PURE__ */ new Map(),
+    pools,
     labelCrossMinus: crossMinusLabelEvents(g),
-    boundaryTop: boundaryTopEvents(g),
     planned: /* @__PURE__ */ new Map(),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? /* @__PURE__ */ new Set()
@@ -2377,14 +2391,11 @@ function route(g, p, optimizeReadability = false, options) {
 }
 function separateSharedEntries(ctx, plans, poolGapRunTrack) {
   const edgeById = new Map(ctx.g.edges.map((e) => [e.id, e]));
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
   const ladderRank = (plan, ownId, peerCol) => {
     const pt = plan.points.find((q) => q.y.t === "poolChannel");
     if (!pt || pt.y.t !== "poolChannel") return 0;
     const t = poolGapRunTrack.get(pt.y.run) ?? 0;
-    const own = ctx.nodeById.get(ownId);
-    const ownPool = own ? poolIndex.get(lanePool.get(own.lane) ?? "") : void 0;
+    const ownPool = ctx.pools.indexOfNode(ownId);
     if (ownPool === void 0) return 0;
     const isUpper = ownPool === pt.y.gap;
     const dir = Math.sign(peerCol - (ctx.p.col.get(ownId) ?? 0));
@@ -2591,7 +2602,7 @@ function gutterRunEnds(ctx) {
         return rowPosOf(y.id) + (y.offset ?? 0) / 1e3;
       case "portY": {
         const n = ctx.nodeById.get(y.id);
-        const edge = n && isAttachedBoundary(n) ? ctx.boundaryTop.has(y.id) ? -0.1 : 0.1 : 0;
+        const edge = n && isAttachedBoundary(n) ? n.boundarySide === "top" ? -0.1 : 0.1 : 0;
         const face = y.side === "top" ? -0.05 : y.side === "bottom" ? 0.05 : 0;
         return rowPosOf(y.id) + edge + face;
       }
@@ -2846,15 +2857,11 @@ var needsBottomMessagePort = (ctx, id) => hasSequenceOut(ctx, id) && ctx.g.edges
 var blackboxLane = (ctx, pool) => ctx.g.lanes.find((lane) => lane.pool === pool && lane.blackbox)?.id;
 var bottomFree = (n) => !(isEventKind(n.kind) && n.label !== "");
 function poolMessageFacesBottom(ctx, nodeId) {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const node = ctx.nodeById.get(nodeId);
-  if (!node) return false;
-  const ni = poolIndex.get(lanePool.get(node.lane));
+  const ni = ctx.pools.indexOfNode(nodeId);
   if (ni === void 0) return false;
   return ctx.g.edges.some((e) => {
     if (e.kind !== "msg" || e.to !== nodeId || !e.fromPool) return false;
-    const fi = poolIndex.get(e.fromPool);
+    const fi = ctx.pools.indexOf(e.fromPool);
     return fi !== void 0 && fi > ni;
   });
 }
@@ -3258,7 +3265,7 @@ function planForward(ctx, e) {
   noteLabelNeed(ctx, e, g1);
   const srcY = fallbackRightY(e, e.from);
   const boundaryExit = e.kind === "seq" && isAttachedBoundary(u.node);
-  const boundaryOffset = ctx.boundaryTop.has(u.node.id) ? -100 : 100;
+  const boundaryOffset = u.node.boundarySide === "top" ? -100 : 100;
   if (rowFreeWide && !sameRow && u.col < v.col && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to) && (e.kind !== "seq" || boundaryExit || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && (!boundaryExit || reserveStubRun(ctx, u.lane, u.row, boundaryOffset, u.col, gutterScale(g1), e))) {
     if (boundaryExit) {
     } else if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
@@ -3330,22 +3337,15 @@ function adjacentPoolGap(ctx, u, v) {
   return Math.abs(ui - vi) === 1 ? Math.min(ui, vi) : void 0;
 }
 function poolPairIndices(ctx, u, v) {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const ui = poolIndex.get(lanePool.get(u.lane));
-  const vi = poolIndex.get(lanePool.get(v.lane));
+  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
+  const vi = ctx.pools.indexOf(ctx.pools.poolOfLane(v.lane));
   return ui !== void 0 && vi !== void 0 ? [ui, vi] : void 0;
 }
 function alternativeBelow(ctx, u) {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const ownPool = lanePool.get(u.lane);
-  const ownIndex = ownPool === void 0 ? void 0 : poolIndex.get(ownPool);
+  const ownPool = ctx.pools.poolOfLane(u.lane);
+  const ownIndex = ctx.pools.indexOf(ownPool);
   if (ownIndex === void 0) return true;
-  const nodePool = (id) => {
-    const n = ctx.nodeById.get(id);
-    return n ? lanePool.get(n.lane) : void 0;
-  };
+  const nodePool = (id) => ctx.pools.poolOfNode(id);
   let above = 0;
   let below = 0;
   for (const e of ctx.g.edges) {
@@ -3354,7 +3354,7 @@ function alternativeBelow(ctx, u) {
     const toPool = e.toPool ?? nodePool(e.to);
     if (fromPool !== ownPool && toPool !== ownPool) continue;
     const other = fromPool === ownPool ? toPool : fromPool;
-    const oi = other === void 0 ? void 0 : poolIndex.get(other);
+    const oi = ctx.pools.indexOf(other);
     if (oi === void 0) continue;
     if (oi < ownIndex) above++;
     if (oi > ownIndex) below++;
@@ -3362,9 +3362,7 @@ function alternativeBelow(ctx, u) {
   return above >= below;
 }
 function planAcrossPoolGap(ctx, e, u, v, gap) {
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const ui = poolIndex.get(lanePool.get(u.lane));
+  const ui = ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane));
   const down = ui === gap;
   const gapPos = ctx.globalPoolGap.get(gap);
   const gU = ctx.globalRow.get(rowKey(u.lane, u.row));
@@ -3508,14 +3506,12 @@ function planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down) {
 function planIntoBoundary(ctx, e, u, v, gU, gV) {
   if (isAttachedBoundary(u.node)) return void 0;
   const hostId = v.node.attachedTo;
-  const onTop = ctx.boundaryTop.has(v.node.id);
+  const onTop = v.node.boundarySide === "top";
   const toSide = onTop ? "top" : "bottom";
   const gap = adjacentPoolGap(ctx, u, v);
   const pair = poolPairIndices(ctx, u, v);
   if (gap === void 0 && pair && pair[0] !== pair[1]) return void 0;
-  const lanePool = new Map(ctx.g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(ctx.g.pools.map((pl, i) => [pl.id, i]));
-  const down = gap !== void 0 ? poolIndex.get(lanePool.get(u.lane)) === gap : gU < gV;
+  const down = gap !== void 0 ? ctx.pools.indexOf(ctx.pools.poolOfLane(u.lane)) === gap : gU < gV;
   const gx = v.col + 1;
   const straightIn = () => {
     if (down !== onTop) return void 0;
@@ -4216,13 +4212,12 @@ function computeCoords(g, p, cells2, rp, includeTitle = true) {
   let y = PAD + titleH;
   let prevPool = null;
   const poolSpan = /* @__PURE__ */ new Map();
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   for (let li = 0; li < g.lanes.length; li++) {
     const lane = g.lanes[li];
-    const myPool = poolOfLane.get(lane.id);
+    const myPool = pools.poolOfLane(lane.id);
     if (prevPool !== null && myPool !== prevPool) {
-      const gap = poolIndex.get(prevPool);
+      const gap = pools.indexOf(prevPool);
       if (gap !== void 0) {
         const tracks = rp.poolGapTracks.get(gap) ?? 0;
         const h = quant(Math.max(POOL_GAP_BASE, tracks * TRACK_PITCH + (tracks > 0 ? 2 * POOL_GAP_PAD : 0)));
@@ -4270,7 +4265,7 @@ function computeCoords(g, p, cells2, rp, includeTitle = true) {
     y += LANE_PAD;
     const headerNeed = quant(measureText(lane.label, 12) + 28);
     if (y - laneTop < headerNeed) y = laneTop + headerNeed;
-    if (myPool !== void 0 && poolOfLane.get(g.lanes[li + 1]?.id ?? "") !== myPool) {
+    if (myPool !== void 0 && pools.poolOfLane(g.lanes[li + 1]?.id ?? "") !== myPool) {
       const pl = g.pools.find((p2) => p2.id === myPool);
       if (pl) {
         const poolStart = poolSpan.get(myPool)?.y0 ?? laneTop;
@@ -4355,12 +4350,11 @@ function computeCoords(g, p, cells2, rp, includeTitle = true) {
   return { colCenterX, gutterX: gutterX2, rowMid, channelY: channelY2, poolChannelY: poolChannelY2, nodeGeom, lanes, poolGeoms, width, height, bandRight, headerW: totalHeader, titleH, portPt };
 }
 function overlayBoundaryEvents(g, nodeGeom) {
-  const top = boundaryTopEvents(g);
   const groups = /* @__PURE__ */ new Map();
   for (const n of g.nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo || !nodeGeom.has(n.attachedTo)) continue;
     const group2 = groups.get(n.attachedTo) ?? { top: [], bottom: [] };
-    (top.has(n.id) ? group2.top : group2.bottom).push(n.id);
+    (n.boundarySide === "top" ? group2.top : group2.bottom).push(n.id);
     groups.set(n.attachedTo, group2);
   }
   for (const [hostId, group2] of groups) {
@@ -5056,13 +5050,9 @@ function checkOracle(g, geo) {
       }
     }
   }
-  const poolOfLane = new Map(g.lanes.map((l) => [l.id, l.pool]));
-  const poolIndex = new Map(g.pools.map((pl, i) => [pl.id, i]));
+  const pools = buildPoolIndex(g);
   const poolGeom = new Map(geo.pools.map((pl) => [pl.id, pl]));
-  const poolOfNode = (id) => {
-    const n = normNode.get(id);
-    return n ? poolOfLane.get(n.lane) : id;
-  };
+  const poolOfNode = (id) => normNode.has(id) ? pools.poolOfNode(id) : id;
   for (const e of geo.edges) {
     if (e.kind === "msg" && poolOfNode(e.from) === poolOfNode(e.to)) {
       out.push(viol("O-7", `\u30E1\u30C3\u30BB\u30FC\u30B8 ${e.id} \u304C\u540C\u4E00\u30D7\u30FC\u30EB\u5185\u3092\u6D41\u308C\u3066\u3044\u308B`));
@@ -5075,8 +5065,8 @@ function checkOracle(g, geo) {
     if (e.kind !== "msg" || e.fromPool || e.toPool) continue;
     const up = poolOfNode(e.from);
     const vp = poolOfNode(e.to);
-    const ui = poolIndex.get(up);
-    const vi = poolIndex.get(vp);
+    const ui = pools.indexOf(up);
+    const vi = pools.indexOf(vp);
     if (ui === void 0 || vi === void 0) continue;
     if (Math.abs(ui - vi) > 1) {
       const lo = Math.min(ui, vi);
@@ -6918,7 +6908,7 @@ function compile(source, opts = {}) {
   const orientation = normalized.orientation ?? opts.orientation ?? "horizontal";
   const vertical = orientation === "vertical";
   const labelCrossMinus = crossMinusLabelEvents(normalized);
-  const cells2 = measureNodes(normalized.nodes, labelCrossMinus, orientation, boundaryTopEvents(normalized));
+  const cells2 = measureNodes(normalized.nodes, labelCrossMinus, orientation);
   const placement = place(normalized);
   const cellsL = vertical ? transposeCells(cells2) : cells2;
   const titleShift = vertical && normalized.title ? TITLE_H : 0;
@@ -6994,9 +6984,7 @@ function compile(source, opts = {}) {
   if (selected !== symbolicSelected) {
     diags.push({ level: "info", code: "N-434", message: "Data Association \u306E\u76F4\u4EA4\u53EF\u8996\u30B0\u30E9\u30D5\u7D4C\u8DEF\u3092\u63A1\u7528" });
   }
-  const laneOfNode = new Map(normalized.nodes.map((n) => [n.id, n.lane]));
-  const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
-  const poolOfNode = (id) => poolOfLane.get(laneOfNode.get(id) ?? "");
+  const poolOfNode = buildPoolIndex(normalized).poolOfNode;
   const kindOf = new Map(normalized.nodes.map((n) => [n.id, n.kind]));
   for (const e of normalized.edges) {
     if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
@@ -7045,7 +7033,8 @@ function compile(source, opts = {}) {
     svg: renderSvg(geometry, opts.version),
     geometry,
     normalized,
-    diagnostics: diags
+    diagnostics: diags,
+    plan: selected.assembled.plan
   };
 }
 function layoutScore(candidate) {
