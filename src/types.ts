@@ -113,6 +113,10 @@ export interface Diagnostic {
 
 export interface NormNode extends IrNode {
   onSpine: boolean; // 本流の選挙結果（C-22）
+  // S-53: 境界イベントを対象 Activity のどの辺に掛けるか。上のプール(黒箱を含む)からメッセージを
+  // 受けるものは top、それ以外は bottom。正規化の出力で、P1(張り出し)・P3(経路)・P4(重ね位置)が
+  // 同じ値を読む。attachedTo を持つ境界イベントにだけ付く。
+  boundarySide?: 'top' | 'bottom';
   // C-66: 同じ論理文書を参照ごとに描き分けた再掲図形。元ノードの id。正規化(S-25)の出力で、
   // IR には現れない。BPMN の DataObjectReference / DataStoreReference と同じ考え方。
   repeatOf?: string;

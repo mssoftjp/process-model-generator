@@ -3,32 +3,9 @@
 // 逃がす。逃がさないとラベルがポートを塞ぎ、線が図形の裏側へ回る。
 // P1(計測)と P3(経路計画)が同じ集合を見る。片方だけ変えるとラベルとポートが衝突する。
 
-import { isAttachedBoundary, isEventKind } from './bpmn.ts';
+import { isEventKind } from './bpmn.ts';
 import { buildPoolIndex } from './pools.ts';
 import type { NormGraph } from './types.ts';
-
-/**
- * 対象 Activity の上辺に掛ける境界イベントの id 集合(C-53 / S-53)。
- * 境界イベントは Activity のどの辺にも置けるので、メッセージが上のプール(黒箱を含む)から
- * 届くものは上辺に置き、送信元から真下へ一直線で入れる。それ以外は下辺。
- * P1(計測の張り出し)・P3(経路)・P4(重ね位置)が同じ集合を見る。
- */
-export function boundaryTopEvents(g: NormGraph): Set<string> {
-  const pools = buildPoolIndex(g);
-  const out = new Set<string>();
-  for (const n of g.nodes) {
-    if (!isAttachedBoundary(n)) continue;
-    const own = pools.indexOfNode(n.id);
-    if (own === undefined) continue;
-    const fromAbove = g.edges.some((e) => {
-      if (e.kind !== 'msg' || e.to !== n.id) return false;
-      const from = e.fromPool ? pools.indexOf(e.fromPool) : pools.indexOfNode(e.from);
-      return from !== undefined && from < own;
-    });
-    if (fromAbove) out.add(n.id);
-  }
-  return out;
-}
 
 /** 交差軸マイナス側へラベルを逃がすイベントの id 集合 */
 export function crossMinusLabelEvents(g: NormGraph): Set<string> {

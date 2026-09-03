@@ -28,7 +28,7 @@
 //     溝で終わる長いスタブは予約しても可読性で劣るため導入しない
 
 import { isAttachedBoundary, isEventKind, isGatewayKind } from './bpmn.ts';
-import { boundaryTopEvents, crossMinusLabelEvents } from './message-labels.ts';
+import { crossMinusLabelEvents } from './message-labels.ts';
 import { buildPoolIndex, type PoolIndex } from './pools.ts';
 import { isDocLike } from './types.ts';
 import type {
@@ -74,7 +74,6 @@ interface Ctx {
   stubRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
   pools: PoolIndex; // レーン→プール、プール→順位(全相で共有)
   labelCrossMinus: ReadonlySet<string>; // ラベルを交差軸マイナス側へ逃がしたイベント(P1 と同じ集合)
-  boundaryTop: ReadonlySet<string>; // 対象 Activity の上辺に掛ける境界イベント(P1/P4 と同じ集合、S-53)
   planned: Map<string, EdgePlan>; // 宣言順で先に計画した辺(入口面の静的参照に使う)
   optimizeReadability: boolean;
   poolExteriorGutter?: number;
@@ -123,7 +122,6 @@ export function route(
     stubRuns: new Map(),
     pools,
     labelCrossMinus: crossMinusLabelEvents(g),
-    boundaryTop: boundaryTopEvents(g),
     planned: new Map(),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? new Set(),
@@ -414,7 +412,7 @@ function gutterRunEnds(ctx: Ctx): Map<number, GutterRunEnds> {
       case 'nodeCY': return rowPosOf(y.id) + (y.offset ?? 0) / 1000;
       case 'portY': {
         const n = ctx.nodeById.get(y.id);
-        const edge = n && isAttachedBoundary(n) ? (ctx.boundaryTop.has(y.id) ? -0.1 : 0.1) : 0;
+        const edge = n && isAttachedBoundary(n) ? (n.boundarySide === 'top' ? -0.1 : 0.1) : 0;
         const face = y.side === 'top' ? -0.05 : y.side === 'bottom' ? 0.05 : 0;
         return rowPosOf(y.id) + edge + face;
       }
@@ -1298,7 +1296,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   // 基線の予約ではなく辺ごとのスタブ帯を予約する。基線で数えると同じ Activity の
   // 2 つの境界イベントの出線が衝突扱いになり、片方が意味のない折れを持つ回り道へ落ちる(L31)。
   const boundaryExit = e.kind === 'seq' && isAttachedBoundary(u.node);
-  const boundaryOffset = ctx.boundaryTop.has(u.node.id) ? -100 : 100;
+  const boundaryOffset = u.node.boundarySide === 'top' ? -100 : 100;
   if (
     rowFreeWide && !sameRow && u.col < v.col &&
     canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to) &&
@@ -1591,7 +1589,7 @@ function planAcrossPoolGapZ(
 
 /**
  * 境界イベント宛メッセージ(C-53 / S-53)。境界イベントは対象 Activity の辺に掛かる円で、
- * 上のプールから届くものは上辺、それ以外は下辺に置かれる(boundaryTopEvents)。
+ * 上のプールから届くものは上辺、それ以外は下辺に置かれる(正規化の boundarySide)。
  * 送信元がその辺の側にあれば、送信元の面から回廊(隣接プール)または対象行の上チャネル
  * (同一プール)を経て円へ真っ直ぐ入る Z 形。そうでなければ対象列の右溝を縦回廊にして
  * 円の外側のスタブから入る。非隣接プールは対象外。
@@ -1601,7 +1599,7 @@ function planIntoBoundary(
 ): EdgePlan | undefined {
   if (isAttachedBoundary(u.node)) return undefined;
   const hostId = v.node.attachedTo!;
-  const onTop = ctx.boundaryTop.has(v.node.id);
+  const onTop = v.node.boundarySide === 'top';
   const toSide: PortSide = onTop ? 'top' : 'bottom';
   const gap = adjacentPoolGap(ctx, u, v);
   const pair = poolPairIndices(ctx, u, v);

@@ -53,7 +53,7 @@ interface Hang {
 
 /**
  * labelCrossMinus: 交差軸マイナス側（横図=上 / 縦図=左）へラベルを逃がすイベントの集合。
- * boundaryTop: 対象 Activity の上辺(交差軸マイナス側)に掛ける境界イベントの集合(S-53)。
+ * 境界イベントの掛かる辺は正規化が決めた boundarySide(S-53)を読む。
  * 既定は交差軸プラス側（横図=下 / 縦図=右）。テキストは回転しないため、
  * 「使用ポートの反対側」という規則は向きごとに別の実面へ写る。
  */
@@ -61,14 +61,13 @@ export function measureNodes(
   nodes: NormNode[],
   labelCrossMinus = new Set<string>(),
   orientation: Orientation = 'horizontal',
-  boundaryTop = new Set<string>(),
 ): Map<string, NodeCell> {
   const hanging = new Map<string, Hang>();
   for (const n of nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo) continue;
     const h = hanging.get(n.attachedTo) ?? { minus: 0, plus: 0, reach: 0 };
     const ext = boundaryExtent(n, orientation);
-    if (boundaryTop.has(n.id)) h.minus = Math.max(h.minus, ext.hang);
+    if (n.boundarySide === 'top') h.minus = Math.max(h.minus, ext.hang);
     else h.plus = Math.max(h.plus, ext.hang);
     h.reach = Math.max(h.reach, ext.reach);
     hanging.set(n.attachedTo, h);
@@ -81,7 +80,7 @@ export function measureNodes(
       // 交差軸では Activity の外側へ寄せ、円から出るシーケンスの線(中心線)を避ける
       cell.labelSide = orientation === 'vertical' ? 'bottom' : 'right';
       const { shift } = boundaryExtent(n, orientation);
-      cell.labelShift = boundaryTop.has(n.id) ? -shift : shift;
+      cell.labelShift = n.boundarySide === 'top' ? -shift : shift;
     }
     cells.set(n.id, cell);
   }

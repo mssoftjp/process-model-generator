@@ -3,7 +3,7 @@
 
 import { applyStrictSemantics } from './bpmn.ts';
 import { buildPoolIndex } from './pools.ts';
-import { boundaryTopEvents, crossMinusLabelEvents } from './message-labels.ts';
+import { crossMinusLabelEvents } from './message-labels.ts';
 import { parse } from './parse.ts';
 import { normalize } from './normalize.ts';
 import { measureNodes } from './measure.ts';
@@ -52,7 +52,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   // 交差軸プラス側(横図=下/縦図=右)からイベントへ着くメッセージは、ラベルを反対側へ逃がす。
   // 黒箱プール発も同じ。P3(route)も同じ集合でポートの空きを判定する。
   const labelCrossMinus = crossMinusLabelEvents(normalized);
-  const cells = measureNodes(normalized.nodes, labelCrossMinus, orientation, boundaryTopEvents(normalized)); // P1
+  const cells = measureNodes(normalized.nodes, labelCrossMinus, orientation); // P1
   const placement = place(normalized); // P2
   // 縦図: P2/P3 は論理軸のまま使い(向き不変)、P4 へ渡すセルとラベル余白だけ論理軸へ写す
   const cellsL = vertical ? transposeCells(cells) : cells;

@@ -11,7 +11,6 @@
 
 import { isAttachedBoundary } from './bpmn.ts';
 import { EVENT_R } from './measure.ts';
-import { boundaryTopEvents } from './message-labels.ts';
 import { buildPoolIndex } from './pools.ts';
 import { GRID, measureText, quant } from './metrics.ts';
 import type { GutterSide, LaneGeom, NodeCell, NodeGeom, NormGraph, Placement, PoolGeom, PortSide, RoutePlan } from './types.ts';
@@ -280,12 +279,11 @@ export function computeCoords(
  * 上のプールからメッセージを受けるものは交差軸マイナス側(論理 top)。S-53。
  */
 function overlayBoundaryEvents(g: NormGraph, nodeGeom: Map<string, NodeGeom>): void {
-  const top = boundaryTopEvents(g);
   const groups = new Map<string, { top: string[]; bottom: string[] }>();
   for (const n of g.nodes) {
     if (!isAttachedBoundary(n) || !n.attachedTo || !nodeGeom.has(n.attachedTo)) continue;
     const group = groups.get(n.attachedTo) ?? { top: [], bottom: [] };
-    (top.has(n.id) ? group.top : group.bottom).push(n.id);
+    (n.boundarySide === 'top' ? group.top : group.bottom).push(n.id);
     groups.set(n.attachedTo, group);
   }
   for (const [hostId, group] of groups) {

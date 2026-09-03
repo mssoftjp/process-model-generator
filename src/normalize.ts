@@ -239,6 +239,7 @@ export function normalize(ir: Ir, strict = false): NormGraph {
     });
   }
 
+  assignBoundarySides(nodes, edges, ir);
   return { id: ir.id, title: ir.title, orientation: ir.orientation, pools: ir.pools, lanes: ir.lanes, nodes, edges, report };
 }
 
@@ -400,6 +401,26 @@ function reaches(from: string, to: string, outAdj: Map<string, NormEdge[]>): boo
     }
   }
   return false;
+}
+
+/**
+ * 境界イベントを掛ける辺(S-53)。境界イベントは対象 Activity のどの辺にも置けるので、
+ * 上のプール(黒箱を含む)からメッセージが届くものは上辺に置き、送信元から真っ直ぐ入れる。
+ * それ以外は下辺。以後の相はこの値だけを見る(別々に計算すると三相が食い違う)。
+ */
+function assignBoundarySides(nodes: NormNode[], edges: NormEdge[], ir: Ir): void {
+  const pools = buildPoolIndex({ pools: ir.pools, lanes: ir.lanes, nodes });
+  for (const n of nodes) {
+    if (!isAttachedBoundary(n)) continue;
+    const own = pools.indexOfNode(n.id);
+    if (own === undefined) { n.boundarySide = 'bottom'; continue; }
+    const fromAbove = edges.some((e) => {
+      if (e.kind !== 'msg' || e.to !== n.id) return false;
+      const from = e.fromPool ? pools.indexOf(e.fromPool) : pools.indexOfNode(e.from);
+      return from !== undefined && from < own;
+    });
+    n.boundarySide = fromAbove ? 'top' : 'bottom';
+  }
 }
 
 /**
