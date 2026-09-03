@@ -204,7 +204,7 @@ export interface EdgePlan {
   fromSide: PortSide;
   toSide: PortSide;
   points: SymPt[];
-  pattern: 'direct' | 'drop' | 'row-approach' | 'channel-approach' | 'return';
+  pattern: 'direct' | 'drop' | 'row-column' | 'row-approach' | 'channel-approach' | 'return';
 }
 
 export interface RoutePlan {

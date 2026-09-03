@@ -1,7 +1,8 @@
 // 公開 API。テキスト -> IR -> P0..P6 -> SVG。
 // 同じテキストと同じオプションは同じ絵(C-82)。乱数・時刻・環境計測をどこにも持たない。
 
-import { applyStrictSemantics, isEventKind } from './bpmn.ts';
+import { applyStrictSemantics } from './bpmn.ts';
+import { crossMinusLabelEvents } from './message-labels.ts';
 import { parse } from './parse.ts';
 import { normalize } from './normalize.ts';
 import { measureNodes } from './measure.ts';
@@ -47,44 +48,8 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   const vertical = orientation === 'vertical';
 
   // 交差軸プラス側(横図=下/縦図=右)からイベントへ着くメッセージは、ラベルを反対側へ逃がす。
-  // 黒箱プール発も同じ。逃さないとラベルがポートを塞ぎ、線が図形の裏側へ回る。
-  const poolIndex = new Map(normalized.pools.map((pl, i) => [pl.id, i]));
-  const poolOfLane = new Map(normalized.lanes.map((l) => [l.id, l.pool]));
-  const nodeById = new Map(normalized.nodes.map((n) => [n.id, n]));
-  const labelCrossMinus = new Set<string>();
-  const poolIdx = (id: string | undefined) => (id === undefined ? undefined : poolIndex.get(id));
-  const nodePoolIdx = (id: string) => {
-    const n = nodeById.get(id);
-    return n ? poolIdx(poolOfLane.get(n.lane)) : undefined;
-  };
-  for (const e of normalized.edges) {
-    if (e.kind !== 'msg') continue;
-    if (e.fromPool) {
-      const fi = poolIdx(e.fromPool);
-      const vi = nodePoolIdx(e.to);
-      const v = nodeById.get(e.to);
-      if (fi !== undefined && vi !== undefined && fi > vi && v && isEventKind(v.kind)) {
-        labelCrossMinus.add(v.id);
-      }
-      continue;
-    }
-    if (e.toPool) {
-      const ui = nodePoolIdx(e.from);
-      const ti = poolIdx(e.toPool);
-      const u = nodeById.get(e.from);
-      if (ui !== undefined && ti !== undefined && ti > ui && u && isEventKind(u.kind)) {
-        labelCrossMinus.add(u.id);
-      }
-      continue;
-    }
-    const u = nodeById.get(e.from);
-    const v = nodeById.get(e.to);
-    const ui = u ? poolIdx(poolOfLane.get(u.lane)) : undefined;
-    const vi = v ? poolIdx(poolOfLane.get(v.lane)) : undefined;
-    if (ui === undefined || vi === undefined || Math.abs(ui - vi) !== 1) continue;
-    if (ui < vi && u && isEventKind(u.kind)) labelCrossMinus.add(u.id);
-    if (vi < ui && v && isEventKind(v.kind)) labelCrossMinus.add(v.id);
-  }
+  // 黒箱プール発も同じ。P3(route)も同じ集合でポートの空きを判定する。
+  const labelCrossMinus = crossMinusLabelEvents(normalized);
   const cells = measureNodes(normalized.nodes, labelCrossMinus, orientation); // P1
   const placement = place(normalized); // P2
   // 縦図: P2/P3 は論理軸のまま使い(向き不変)、P4 へ渡すセルとラベル余白だけ論理軸へ写す

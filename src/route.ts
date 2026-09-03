@@ -4,6 +4,8 @@
 //
 // 経路パターン(距離に依存しない決定的規則):
 //   direct           同一行で間にノードが無い: 基線上を直進
+//   row-column       行先行 L: 自行の基線を対象列まで直進し、対象列中心を縦走して上/下頂点に入る
+//                    (合流ゲートウェイへの行違い入り・文書→工程の関連。予約が成立するときだけ)
 //   drop             ゲートウェイの下方向分岐で自列が空いている: 真下へ進み対象行で曲がって左から入る
 //   row-approach     出口右の溝を垂直移動して対象行の基線に乗り、左から入る
 //   channel-approach 対象行の上チャネルを経由する完全迂回(常に合法な最終手段)。
@@ -20,10 +22,12 @@
 //   - チャネル走行は入れ子順(assignChannelTracks)
 //   - 列溝の縦走行も側内で入れ子順(assignGutterTracks): 短い区間ほどポート寄り。
 //     出スタブが長距離の通過縦線を横切らなくなる
-//   - 基線の水平走行は必ずノードで終わる(両端保護の不変条件)。溝で終わる長いスタブは
-//     この不変条件を壊すため導入しない(fuzz が棄却した設計)
+//   - 基線の水平走行は rowRuns に登録する(S-36)。かつては「必ずノードで終わる」両端保護に
+//     頼っていたが、列中心で終わる行先行 L を安全に置くため明示予約へ移した。
+//     溝で終わる長いスタブは予約しても可読性で劣るため導入しない
 
 import { isAttachedBoundary, isEventKind, isGatewayKind } from './bpmn.ts';
+import { crossMinusLabelEvents } from './message-labels.ts';
 import { isDocLike } from './types.ts';
 import type {
   EdgePlan, GutterSide, NormEdge, NormGraph, NormNode, Placement, PortSide, RoutePlan, SymX, SymY,
@@ -50,6 +54,11 @@ interface Ctx {
   // 相互保護が効かないため、明示レジストリで重なりを断つ。
   // 同一始点は幹線共有、同一終点は O-6 と同じ収束共有（タスク入口は後段で分離）。
   colRuns: Map<number, Array<{ a: number; b: number; from: string; to: string }>>;
+  // 行基線の水平走行(direct・drop・row/channel-approach の基線区間)。列スケール
+  // (列 c = c、溝 g = g - 0.5)。S-36 の「ノードで終わる」相互保護を明示予約に置き換え、
+  // 列中心で終わる水平(行先行 L)も同じ規則で安全に扱う。共有規則は colRuns と同じ。
+  rowRuns: Map<string, Array<{ a: number; b: number; from: string; to: string }>>;
+  labelCrossMinus: ReadonlySet<string>; // ラベルを交差軸マイナス側へ逃がしたイベント(P1 と同じ集合)
   optimizeReadability: boolean;
   poolExteriorGutter?: number;
   gapDestFlip: ReadonlySet<string>;
@@ -93,6 +102,8 @@ export function route(
     gutterRuns: new Map(), channelRuns: new Map(), runSeq: { n: 0 }, gutterLabelNeed: new Map(),
     poolGapRuns: new Map(),
     colRuns: new Map(),
+    rowRuns: new Map(),
+    labelCrossMinus: crossMinusLabelEvents(g),
     optimizeReadability,
     gapDestFlip: options?.gapDestFlip ?? new Set(),
   };
@@ -433,6 +444,34 @@ function canReserveColRun(
   );
 }
 
+/** 行基線の水平区間を予約できるか(列スケール。同一始点・同一終点は共有可)。 */
+function canReserveRowRun(
+  ctx: Ctx, lane: string, row: number, a: number, b: number, from: string, to: string,
+): boolean {
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  return !(ctx.rowRuns.get(rowKey(lane, row)) ?? []).some(
+    (r) => r.from !== from && r.to !== to && r.a < hi && lo < r.b,
+  );
+}
+
+/** 行基線の水平区間を登録する。検査済み・または構築上安全な区間に使う。 */
+function noteRowRun(ctx: Ctx, lane: string, row: number, a: number, b: number, e: NormEdge): void {
+  const key = rowKey(lane, row);
+  const runs = ctx.rowRuns.get(key) ?? [];
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  runs.push({ a: lo, b: hi, from: colRunEnd(e, 'from'), to: colRunEnd(e, 'to') });
+  ctx.rowRuns.set(key, runs);
+}
+
+function reserveRowRun(ctx: Ctx, lane: string, row: number, a: number, b: number, e: NormEdge): boolean {
+  if (!canReserveRowRun(ctx, lane, row, a, b, colRunEnd(e, 'from'), colRunEnd(e, 'to'))) return false;
+  noteRowRun(ctx, lane, row, a, b, e);
+  return true;
+}
+
+/** 溝 g の列スケール位置 */
+const gutterScale = (g: number) => g - 0.5;
+
 // ---- 走行の登録 ----
 
 function allocGutter(ctx: Ctx, gi: number, side: GutterSide, a: number, b: number): number {
@@ -523,6 +562,11 @@ function poolMessageFacesBottom(ctx: Ctx, nodeId: string): boolean {
   });
 }
 
+/** P1 と同じ規則(message-labels.ts)でラベルが交差軸マイナス側へ逃げたイベントか。下ポートが空く。 */
+function eventLabelMovedUp(ctx: Ctx, nodeId: string): boolean {
+  return ctx.labelCrossMinus.has(nodeId);
+}
+
 function eventHasBottomOut(ctx: Ctx, id: string): boolean {
   return ctx.g.edges.some((e) =>
     e.from === id && (e.kind === 'assoc' || (e.kind === 'msg' && !e.toPool)));
@@ -580,7 +624,9 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
       };
     }
     // 文書類以外に入る辺は必ず上頂点へ(左ポートはシーケンス入りの領分。S-51)
-    if (!isDocLike(v.node.kind)) return planIntoTop(ctx, e, u, v, gU);
+    if (!isDocLike(v.node.kind)) {
+      return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
+    }
     // 文書類へ落とす辺: 生産タスクの真下方向にあれば drop(下ポートは出専用)。
     // 別列は、同じノードに他の関連があるときだけ(下辺の入出力スロット)。
     // シーケンスと共存する単独の右出関連は cy+10 のまま残す。
@@ -594,6 +640,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
       rowFree &&
       reserveColRun(ctx, u.col, gU, gV, e)
     ) {
+      noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
       return {
         edgeId: e.id, fromSide: 'bottom', toSide: 'left', pattern: 'drop',
         points: [
@@ -723,6 +770,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   // direct: 同一行・間にノード無し
   if (sameRow && rowFree && e.kind === 'seq') {
     noteLabelNeed(ctx, e, u.col + 1);
+    noteRowRun(ctx, u.lane, u.row, u.col, v.col, e);
     // Boundary Event は P4 で対象 Activity の論理 bottom へ重ねるため、セル基線から
     // 実ポートが移動する。2点の direct は移動後に斜線になるので、終点 x で曲げる。
     const points = isAttachedBoundary(u.node)
@@ -793,9 +841,13 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     topFree(ctx, u) && rowFreeWide
   ) {
     const chU = ctx.globalChannel.get(rowKey(u.lane, u.row))!;
-    if (reserveColRun(ctx, u.col, chU, gU, e)) {
+    if (
+      canReserveRowRun(ctx, v.lane, v.row, gutterScale(u.col + 1), v.col, e.from, e.to) &&
+      reserveColRun(ctx, u.col, chU, gU, e)
+    ) {
       const g1 = u.col + 1;
       noteLabelNeed(ctx, e, g1);
+      noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
       const tSrc = allocChannel(ctx, u.lane, u.row, u.col, g1 - 0.5, 'below', gU, u.col);
       const r1 = allocGutter(ctx, g1, 'exit', chU, gV);
       return {
@@ -819,6 +871,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
       rowFree &&
       reserveColRun(ctx, u.col, gU, gV, e)
     ) {
+      noteRowRun(ctx, v.lane, v.row, u.col, v.col, e);
       return {
         edgeId: e.id, fromSide: 'bottom', toSide: 'left', pattern: 'drop',
         points: [
@@ -852,9 +905,11 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
 
   // 行違いでゲートウェイに入る辺は頂点入り(channel-approach 系)に限定する。
   // 交差軸プラス側からイベントへ着くシーケンスも同じ。上へ回ると図形の裏側へ出る。
-  if (!sameRow && isGw(v.node)) return planIntoTop(ctx, e, u, v, gU);
+  if (!sameRow && isGw(v.node)) {
+    return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
+  }
   if (!sameRow && isEventKind(v.node.kind) && gU > gV && eventBottomOpen(ctx, v.node)) {
-    return planIntoTop(ctx, e, u, v, gU);
+    return planRowThenColumn(ctx, e, u, v, gU, gV) ?? planIntoTop(ctx, e, u, v, gU);
   }
 
   const g1 = u.col + 1; // 出口すぐ右の溝
@@ -863,7 +918,13 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
 
   // row-approach: 溝を垂直移動して対象行の基線に乗る。
   // 時間を戻るストア関連は基線に乗せない。他所出のシーケンス列を貫いて途中出現に見える。
-  if (rowFreeWide && !sameRow && !(e.kind === 'assoc' && u.col > v.col && v.node.kind === 'store')) {
+  if (
+    rowFreeWide && !sameRow && !(e.kind === 'assoc' && u.col > v.col && v.node.kind === 'store') &&
+    (e.kind !== 'seq' || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) &&
+    canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)
+  ) {
+    if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+    noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
     const run = allocGutter(ctx, g1, 'exit', gU, gV);
     return {
       edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'row-approach',
@@ -883,6 +944,7 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     u.lane === v.lane && !sameRow && v.col === g1 && adjacentPeer !== undefined &&
     ctx.g.edges.some((other) => other.from === adjacentPeer && other.to === e.to)
   ) {
+    noteRowRun(ctx, v.lane, v.row, gutterScale(v.col), v.col, e);
     const run = allocGutter(ctx, v.col, 'entry', gU, gV);
     return {
       edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'row-approach',
@@ -901,6 +963,8 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   const tCh = allocChannel(ctx, v.lane, v.row, g1 - 0.5, v.col - 0.5, gU < chPos ? 'above' : 'below', gU, g1 - 0.5);
   const gv = v.col; // 対象列のすぐ左の溝
   const r2 = allocGutter(ctx, gv, 'entry', chPos, gV);
+  if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  noteRowRun(ctx, v.lane, v.row, gutterScale(gv), v.col, e);
   return {
     edgeId: e.id, fromSide: 'right', toSide: 'left', pattern: 'channel-approach',
     points: [
@@ -979,6 +1043,8 @@ function planAcrossPoolGap(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gap: number)
   const gapPos = ctx.globalPoolGap.get(gap)!;
   const gU = ctx.globalRow.get(rowKey(u.lane, u.row))!;
   const gV = ctx.globalRow.get(rowKey(v.lane, v.row))!;
+  const z = planAcrossPoolGapZ(ctx, e, u, v, gap, gapPos, gU, gV, down);
+  if (z) return z;
   // 列溝に面した左右辺から直接出入りする。上下ポート直後の小さなコの字は
   // BPMN上の意味を持たず、視覚ノイズになるため作らない。
   const rightward = v.col > u.col;
@@ -1011,6 +1077,63 @@ function planAcrossPoolGap(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gap: number)
       { x: gutterX(dstG, 'entry', dstRun), y: poolChannelY(gap, run) },
       { x: gutterX(dstG, 'entry', dstRun), y: nodeCY(e.to, dstYOffset) },
       { x: portX(e.to, toSide), y: nodeCY(e.to, dstYOffset) },
+    ],
+  };
+}
+
+/**
+ * 隣接プール間メッセージの Z 形: 送信側の列中心をプール間回廊まで縦走し、回廊を横走して
+ * 受信側の列中心へ縦に入る(BPMN の慣習どおり、通信は参加者間を縦に渡る)。
+ * 同列なら一直線。列中心の縦走は colRuns(S-58)、回廊は poolGap トラックで予約する。
+ * 成立しなければ従来の側面ポート経路(4 折れ)へ落ちる。
+ */
+function planAcrossPoolGapZ(
+  ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gap: number, gapPos: number, gU: number, gV: number,
+  down: boolean,
+): EdgePlan | undefined {
+  if (isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return undefined;
+  const otherMsg = (id: string) =>
+    ctx.g.edges.some((o) => o.id !== e.id && o.kind === 'msg' && (o.from === id || o.to === id));
+  // ゲートウェイの上下頂点は後段でスロット分離されない。他の通信があれば側面経路に任せる
+  if ((isGw(u.node) && otherMsg(u.node.id)) || (isGw(v.node) && otherMsg(v.node.id))) return undefined;
+  const bottomLabelFree = (n: NormNode) => bottomFree(n) || eventLabelMovedUp(ctx, n.id);
+  const fromSide: PortSide = down ? 'bottom' : 'top';
+  const toSide: PortSide = down ? 'top' : 'bottom';
+  if (down) {
+    if (!bottomLabelFree(u.node)) return undefined;
+    if (isGw(u.node) && !bottomOutFree(ctx, u, gU)) return undefined;
+    if (eventLabelMovedUp(ctx, v.node.id)) return undefined; // 上辺にラベル
+  } else {
+    if (!topFree(ctx, u)) return undefined;
+    if (!bottomLabelFree(v.node)) return undefined;
+    if (v.node.kind !== 'task' && eventHasBottomOut(ctx, v.node.id)) return undefined;
+    if (isGw(v.node) && !bottomOutFree(ctx, v, gV)) return undefined;
+  }
+  // 回廊は帯であり離散位置 gapPos では厚みが見えない。反対側の縦線と帯の中で重なるのを
+  // 防ぐため、予約区間を回廊の向こう側まで 0.5 伸ばす(チャネル終端の隣接セル条件と同型)。
+  const senderEnd = down ? gapPos + 0.5 : gapPos - 0.5;
+  const receiverStart = down ? gapPos - 0.5 : gapPos + 0.5;
+  if (!canReserveColRun(ctx, u.col, gU, senderEnd, e.from, e.to)) return undefined;
+  if (!canReserveColRun(ctx, v.col, receiverStart, gV, e.from, e.to)) return undefined;
+  reserveColRun(ctx, u.col, gU, senderEnd, e);
+  reserveColRun(ctx, v.col, receiverStart, gV, e);
+  if (u.col === v.col) {
+    return {
+      edgeId: e.id, fromSide, toSide, pattern: 'drop',
+      points: [
+        { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+        { x: nodeCX(e.to), y: portY(e.to, toSide) },
+      ],
+    };
+  }
+  const run = allocPoolGap(ctx, gap, down ? u.col : v.col, down ? v.col : u.col);
+  return {
+    edgeId: e.id, fromSide, toSide, pattern: 'channel-approach',
+    points: [
+      { x: nodeCX(e.from), y: portY(e.from, fromSide) },
+      { x: nodeCX(e.from), y: poolChannelY(gap, run) },
+      { x: nodeCX(e.to), y: poolChannelY(gap, run) },
+      { x: nodeCX(e.to), y: portY(e.to, toSide) },
     ],
   };
 }
@@ -1138,6 +1261,7 @@ function planIntoTop(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number): EdgeP
     !nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col);
   const g1 = farTargetGutter ? v.col + 1 : u.col + 1;
   noteLabelNeed(ctx, e, g1);
+  if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
   // 真下のセルが埋まっていると、そのノードへの上頂点降りと同じ x で重なるため不可
   if (canEnterBottom) {
     const chB = ctx.globalChannel.get(chBelowKey)!;
@@ -1183,6 +1307,50 @@ function planIntoTop(ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number): EdgeP
       { x: gutterX(g1, gutterSide, r1), y: channelY(v.lane, v.row, tCh) },
       { x: nodeCX(e.to), y: channelY(v.lane, v.row, tCh) },
       { x: nodeCX(e.to), y: portY(e.to, 'top') },
+    ],
+  };
+}
+
+/**
+ * 行先行 L(row-column): 自行の基線を対象列まで直進し、対象列の中心を縦走して
+ * 対象の上/下頂点へ入る 1 折れ形。列先行 L(drop)の鏡像で、合流ゲートウェイへの
+ * 行違い入りと文書→工程のデータ関連の自然形。
+ *
+ * 安全条件は全て静的 + 予約:
+ *   - 出発行の u.col+1..v.col のセルが空(水平部が図形を貫かない)
+ *   - 対象列の u.row..v.row 間のセルが空 + colRuns 予約(同一終点は収束共有 = バス化)
+ *   - 出発行の基線区間を rowRuns 予約(S-36 の相互保護を予約で置き換える)
+ *   - 入る頂点が出として使われない(下: bottomOutFree 系 / 上: 出予約は colRuns が守る)
+ * ゲートウェイ発は S-50 の頂点文法(上下出し)に従うため対象外。
+ */
+function planRowThenColumn(
+  ctx: Ctx, e: NormEdge, u: Cell, v: Cell, gU: number, gV: number,
+): EdgePlan | undefined {
+  if (gU === gV || v.col <= u.col) return undefined;
+  if (isGw(u.node) || isAttachedBoundary(u.node) || isAttachedBoundary(v.node)) return undefined;
+  if (isDocLike(v.node.kind)) return undefined;
+  if (nodeBetweenOnRow(ctx, u.lane, u.row, u.col + 1, v.col)) return undefined;
+  const fromBelow = gU > gV;
+  const side: PortSide = fromBelow ? 'bottom' : 'top';
+  if (fromBelow) {
+    if (!bottomOutFree(ctx, v, gV) || needsBottomMessagePort(ctx, v.node.id)) return undefined;
+    if (!(bottomFree(v.node) || eventBottomOpen(ctx, v.node))) return undefined;
+    // 非タスクの下スタブ(planFromBottomViaGutter)は予約を持たないため、非 seq 出があれば避ける
+    if (v.node.kind !== 'task' && eventHasBottomOut(ctx, v.node.id)) return undefined;
+  } else if (isEventKind(v.node.kind) && e.kind === 'seq') {
+    return undefined; // イベントの上辺入りは現行文法に無い(ラベル面の可能性)
+  }
+  if (!canReserveRowRun(ctx, u.lane, u.row, u.col, v.col, e.from, e.to)) return undefined;
+  if (!reserveColRun(ctx, v.col, gU, gV, e)) return undefined;
+  noteRowRun(ctx, u.lane, u.row, u.col, v.col, e);
+  noteLabelNeed(ctx, e, u.col + 1);
+  const srcY = fallbackRightY(e, e.from);
+  return {
+    edgeId: e.id, fromSide: 'right', toSide: side, pattern: 'row-column',
+    points: [
+      { x: portX(e.from, 'right'), y: srcY },
+      { x: nodeCX(e.to), y: srcY },
+      { x: nodeCX(e.to), y: portY(e.to, side) },
     ],
   };
 }
@@ -1390,6 +1558,7 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
         outer < gU ? 'below' : 'above', gU, gup - 0.5,
       );
       const srcY = fallbackRightY(e, e.from);
+      if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(gup), e);
       return {
         edgeId: e.id, fromSide: 'right', toSide: targetSide, pattern: 'return',
         points: [
@@ -1423,6 +1592,7 @@ function planReturn(ctx: Ctx, e: NormEdge): EdgePlan {
   const rUp = allocGutter(ctx, gup, 'exit', gU, chV);
   const t = allocChannel(ctx, v.lane, v.row, v.col, gup - 0.5, gU < chV ? 'above' : 'below', gU, gup - 0.5);
   const srcY = fallbackRightY(e, e.from);
+  if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(gup), e);
   return {
     edgeId: e.id, fromSide: 'right', toSide: 'top', pattern: 'return',
     points: [

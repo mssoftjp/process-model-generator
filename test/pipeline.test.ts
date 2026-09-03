@@ -839,10 +839,14 @@ scan -.-> invoice`);
     const p1 = r.geometry.pools.find((p) => p.id === 'p1')!;
     expect(p1.y - (p0.y + p0.h)).toBeGreaterThanOrEqual(48);
     const messages = r.geometry.edges.filter((e) => e.kind === 'msg');
+    // 境界直後に意味のない小折れを作らない(S-57)。側面出しは水平、列中心の Z 形は垂直で、
+    // どちらも最初と最後の区間は 16px 以上の一直線であること。
+    const len = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
     for (const e of messages) {
-      expect(e.points[0]!.y, `${e.id} source bend`).toBe(e.points[1]!.y);
-      expect(e.points.at(-1)!.y, `${e.id} target bend`).toBe(e.points.at(-2)!.y);
-      expect(e.points.some((a, i) => {
+      expect(len(e.points[0]!, e.points[1]!), `${e.id} source stub`).toBeGreaterThanOrEqual(16);
+      expect(len(e.points.at(-1)!, e.points.at(-2)!), `${e.id} target stub`).toBeGreaterThanOrEqual(16);
+      const straight = e.points.length === 2;
+      expect(straight || e.points.some((a, i) => {
         const b = e.points[i + 1];
         return !!b && a.y === b.y && a.x !== b.x && a.y > p0.y + p0.h && a.y < p1.y;
       }), e.id).toBe(true);

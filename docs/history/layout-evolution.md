@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L19
+# Layout Evolution, L1–L20
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -135,6 +135,20 @@ The accepted rules:
 Always choosing the perimeter route failed 17 of 500 fuzz cases, so the legal baseline remained available and an improved candidate was accepted only when all oracles passed.
 
 Outcome at that time: zero crossing hops and zero oracle violations for Invoice, Dispatch, Recourse, Credit Scoring, and Restaurant. This is historical evidence, not a guarantee for every current input.
+
+## L20 — Add the missing one-bend shapes (2026-09-03)
+
+A bend audit over 28 diagrams (513 edges, 534 bends) measured each edge against the minimum bend count implied by its port pair. 87% of the excess sat in one pattern: channel approaches that climbed to the channel above the target and came back down into its vertex. The orthogonal one-bend shape comes in two orientations, column-first (`drop`) and row-first, and the engine had only the first. The row-first shape was impossible because S-36 protected baseline runs only through node occupancy at both ends, which forbade a run ending at a column center; earlier cycles had already concluded that only explicit reservation could lift that restriction.
+
+The accepted rules, in the order they were verified:
+
+- a per-row reservation registry for baseline horizontals (`rowRuns`, the counterpart of the S-58 column registry), introduced first and confirmed to leave all 28 diagrams byte-identical;
+- the `row-column` pattern (S-44) for cross-row entries into gateways and events and for document-to-task associations, with converging edges sharing one vertical; and
+- the Z shape for adjacent-pool messages (S-57), leaving and entering through the facing vertices and crossing the corridor once.
+
+Fuzzing found one new hole in the Z: two verticals arriving at the same column from opposite sides of the corridor touch in the discrete model but overlap inside the corridor band once tracks are assigned. Extending each reservation half a position across the corridor closed it, the same remedy as the channel-terminal cell condition of L11.
+
+Outcome: bends 534 → 437, crossing hops 72 → 64, no diagram worse on any metric, and the 2,000-seed fuzz violation set identical to the previous release. O-10 was relaxed to admit the same-column single vertical, and the S-57 test now checks for the absence of a short stub rather than for a horizontal exit.
 
 ## Open items retained from the loops
 

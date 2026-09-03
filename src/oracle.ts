@@ -135,6 +135,8 @@ export function checkOracle(g: NormGraph, geo: Geometry): Diagnostic[] {
     const secondId = ui < vi ? vp! : up!;
     const first = poolGeom.get(firstId)!;
     const second = poolGeom.get(secondId)!;
+    // 同列の一直線(2 点)は幹線を持たず、参加者内部に水平成分も置かない。
+    if (e.points.length === 2) continue;
     if (vertical) {
       const x0 = first.x + first.w;
       const x1 = second.x;
