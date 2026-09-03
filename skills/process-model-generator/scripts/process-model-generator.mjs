@@ -3238,8 +3238,11 @@ function planForward(ctx, e) {
   const g1 = u.col + 1;
   noteLabelNeed(ctx, e, g1);
   const srcY = fallbackRightY(e, e.from);
-  if (rowFreeWide && !sameRow && u.col < v.col && (e.kind !== "seq" || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)) {
-    if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+  const boundaryExit = e.kind === "seq" && isAttachedBoundary(u.node);
+  const boundaryOffset = ctx.boundaryTop.has(u.node.id) ? -100 : 100;
+  if (rowFreeWide && !sameRow && u.col < v.col && canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to) && (e.kind !== "seq" || boundaryExit || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) && (!boundaryExit || reserveStubRun(ctx, u.lane, u.row, boundaryOffset, u.col, gutterScale(g1), e))) {
+    if (boundaryExit) {
+    } else if (e.kind === "seq") noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
     else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
     noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
     const run = allocGutter(ctx, g1, "exit", gU, gV);

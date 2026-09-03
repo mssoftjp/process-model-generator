@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L30
+# Layout Evolution, L1–L31
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -233,7 +233,17 @@ Looking at two sequence flows leaving the boundary events of one activity, the u
 
 Outcome: corpus hops 62 → 60 (delivery_acceptance loses a crossed pair of data lines), fuzz hops 91,640 → 89,003 over 2,000 seeds × 2 orientations, no violations; 27 corpus diagrams byte-identical. The specification moved to v1.6.
 
+## L31 — Boundary-event exits leave the baseline registry (2026-09-03)
+
+The same two-boundary example still gave the lower exit a four-bend route with a 20 px jog: the row-approach pattern reserves the source row's baseline for a sequence exit, and the second boundary event's exit was refused because the first had already reserved that baseline, although the two lines run at the activity's top and bottom edges and never share a y. A sequence flow leaving a boundary event now reserves a per-edge stub band (top or bottom edge of the activity) like the S-57 offset stubs, so both exits take the three-segment row approach and, with L30's ordering, do not cross each other.
+
+Extending the fuzz generator with sequence flows leaving boundary events (to a node of the same pool) then exposed 98 pre-existing violations over 2,000 seeds × 2 orientations, identical before and after this change: returns that start at a boundary event, targets promoted to synthetic joins, and boundary events on hosts whose column is pinned. These are recorded as the next open item; the generator extension stays out of the test suite until they are closed.
+
+Outcome: corpus unchanged (28 diagrams byte-identical); the regression test covers the two-boundary case.
+
 ## Open items retained from the loops
+
+- **Sequence flows leaving boundary events** (found in L31): with the extended generator, 98 of 4,000 fuzz cases violate the oracle, mostly overlapping runs around synthetic gateways and returns that begin at a boundary event. Not yet addressed.
 
 - **C-66** Repeated glyphs are rule-based (S-25); a hint to force or forbid repetition per document is not yet exposed in the DSL.
 - **C-68** Conditional port opening is implemented only where static safety is proven.

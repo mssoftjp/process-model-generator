@@ -1965,6 +1965,42 @@ send ~> alert`;
     expect(msg.points.at(-1)!.x).toBe(alert.x);
     expect(alert.labelSide).toBe('bottom');
   });
+
+  it('同じ Activity の 2 つの境界イベントから出るシーケンスは 2 折れで交差しない', () => {
+    // 境界イベントの出線は Activity の辺の高さを走るので基線の予約で衝突扱いにしない(L31)。
+    // 溝トラックは交差しない順(L30)なので、互い違いの 2 本は互いを横切らない
+    const src = `pool P1[A]
+lane L1[L1]
+ start s1
+ task(send) send[通知]
+ s1 -> send
+pool P2[B]
+lane L2[L2]
+ start s2
+ task work[作業]
+ boundary(message) alert[中断] @work
+ boundary(timer) late[期限超過] @work
+ task fix[対応]
+ task esc[エスカレーション]
+ s2 -> work
+ alert -> fix
+ late -> esc
+pool P3[C]
+lane L3[L3]
+ start s3
+ task(send) ping[催促]
+ s3 -> ping
+send ~> alert
+ping ~> late`;
+    const r = noOracleViolations(src);
+    const fix = r.geometry.edges.find((e) => e.id.includes('alert_fix'))!;
+    const esc = r.geometry.edges.find((e) => e.id.includes('late_esc'))!;
+    expect(fix.points.length).toBe(4);
+    expect(esc.points.length).toBe(4);
+    // 期限超過(下辺、下へ長い)が内側、中断(上辺、短い)が外側
+    expect(esc.points[1]!.x).toBeLessThan(fix.points[1]!.x);
+    expect((fix.hops?.length ?? 0) + (esc.hops?.length ?? 0)).toBe(1); // 作業 → 終了 との交差だけ
+  });
 });
 
 describe('fuzz 残余の回帰 (L28)', () => {

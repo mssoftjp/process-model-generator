@@ -1287,12 +1287,20 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
   // row-approach: 溝を垂直移動して対象行の基線に乗る。
   // 時間を戻るストア関連は基線に乗せない。他所出のシーケンス列を貫いて途中出現に見える。
   // 時間を戻る辺(対象が左)は基線に乗せない。溝から左へ向かう接近が対象や途中ノードを貫く。
+  // 境界イベントから出るシーケンスは対象 Activity の辺の高さ(基線ではない)を走るので、
+  // 基線の予約ではなく辺ごとのスタブ帯を予約する。基線で数えると同じ Activity の
+  // 2 つの境界イベントの出線が衝突扱いになり、片方が意味のない折れを持つ回り道へ落ちる(L31)。
+  const boundaryExit = e.kind === 'seq' && isAttachedBoundary(u.node);
+  const boundaryOffset = ctx.boundaryTop.has(u.node.id) ? -100 : 100;
   if (
     rowFreeWide && !sameRow && u.col < v.col &&
-    (e.kind !== 'seq' || canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) &&
-    canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to)
+    canReserveRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e.from, e.to) &&
+    (e.kind !== 'seq' || boundaryExit ||
+      canReserveRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e.from, e.to)) &&
+    (!boundaryExit || reserveStubRun(ctx, u.lane, u.row, boundaryOffset, u.col, gutterScale(g1), e))
   ) {
-    if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
+    if (boundaryExit) { /* reserveStubRun が登録済み */ }
+    else if (e.kind === 'seq') noteRowRun(ctx, u.lane, u.row, u.col, gutterScale(g1), e);
     else noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
     noteRowRun(ctx, v.lane, v.row, gutterScale(g1), v.col, e);
     const run = allocGutter(ctx, g1, 'exit', gU, gV);
