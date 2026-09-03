@@ -1804,3 +1804,57 @@ high -> e`);
     expect(highFar).toBeLessThanOrEqual(160);
   });
 });
+
+describe('P0 文書再掲 (C-66)', () => {
+  const chain = (n: number) => Array.from({ length: n }, (_, i) => `  task t${i}[工程${i}]`).join('\n') +
+    '\n' + Array.from({ length: n - 1 }, (_, i) => `t${i} -> t${i + 1}`).join('\n');
+
+  it('遠く離れた書き手を持つストアを参照の塊ごとに再掲する', () => {
+    const src = `lane L
+${chain(9)}
+  store s[会計システム]
+t0 -.-> s
+t8 -.-> s`;
+    const n = normalize(parse(src).ir);
+    const glyphs = n.nodes.filter((x) => x.id === 's' || x.repeatOf === 's');
+    expect(glyphs.map((x) => x.id)).toEqual(['s', 's__2']);
+    expect(glyphs[1]!.synthetic).toBe(true);
+    expect(n.edges.find((e) => e.from === 't0' && e.kind === 'assoc')!.to).toBe('s');
+    expect(n.edges.find((e) => e.from === 't8' && e.kind === 'assoc')!.to).toBe('s__2');
+    expect(n.report.some((d) => d.code === 'N-260')).toBe(true);
+    const r = compile(src);
+    expect(r.diagnostics.filter((d) => d.code.startsWith('O-'))).toEqual([]);
+    expect(r.geometry.nodes.filter((x) => x.label === '会計システム')).toHaveLength(2);
+  });
+
+  it('近い参照は再掲しない', () => {
+    const src = `lane L
+${chain(4)}
+  store s[会計システム]
+t0 -.-> s
+t3 -.-> s`;
+    const n = normalize(parse(src).ir);
+    expect(n.nodes.filter((x) => x.repeatOf !== undefined)).toHaveLength(0);
+  });
+
+  it('再掲図形は参照元のレーンへ置き、順序は決定的', () => {
+    const src = `lane A
+  task a[書く]
+lane B
+  task b[中継]
+lane C
+  task c[読む]
+  doc d[帳票]
+a -> b
+b -> c
+a -.-> d
+d -.-> c`;
+    const first = normalize(parse(src).ir);
+    const second = normalize(parse(src).ir);
+    expect(first.nodes.map((x) => `${x.id}:${x.lane}`)).toEqual(second.nodes.map((x) => `${x.id}:${x.lane}`));
+    const glyphs = first.nodes.filter((x) => x.id === 'd' || x.repeatOf === 'd');
+    // レーン距離 2 は再掲しない(隣接 2 レーン以内は 1 折れの関連線で読める)
+    expect(glyphs).toHaveLength(1);
+    expect(glyphs[0]!.lane).toBe('C');
+  });
+});

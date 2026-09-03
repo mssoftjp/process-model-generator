@@ -161,7 +161,7 @@ External node labels and condition labels compete with nodes, ports, and edges. 
 - **C-63** Data objects and data associations.
 - **C-64** Documents represent state and do not advance time columns.
 - **C-65** External labels must leave port paths clear.
-- **C-66** Repeating a widely read document remains unsupported.
+- **C-66** A widely referenced document or store is repeated as several reference glyphs when its references are far apart (S-25). The IR keeps one node; the glyphs are normalization output, like BPMN's data object and data store references.
 - **C-67** A document without a writer sits immediately before its first reader.
 - **C-68** A normally dedicated port may be opened when static analysis proves it unused.
 - **C-69** Intermediate events and event-based gateways require their own markers and legality rules.

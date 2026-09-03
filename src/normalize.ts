@@ -33,6 +33,9 @@ export function normalize(ir: Ir, strict = false): NormGraph {
   const declOf = (id: string) => nodeById.get(id)!.declIndex;
   let nextDecl = Math.max(0, ...nodes.map((n) => n.declIndex + 1), ...edges.map((e) => e.declIndex + 1));
 
+  // ---- 0. 文書再掲（C-66） ----
+  repeatDistantDocuments(nodes, edges, ir, nodeById, allocateNodeId, () => nextDecl++, report);
+
   // ---- 1. 戻り辺の選挙（C-25） ----
   electReturns(nodes, edges, report, strict);
 
@@ -236,6 +239,106 @@ export function normalize(ir: Ir, strict = false): NormGraph {
   }
 
   return { id: ir.id, title: ir.title, orientation: ir.orientation, pools: ir.pools, lanes: ir.lanes, nodes, edges, report };
+}
+
+// 再掲の判定に使う参照間の距離。列の隙間がこれを超えるか、レーンが隣接より離れると別の図形にする。
+const REPEAT_COL_GAP = 5;
+const REPEAT_LANE_GAP = 2;
+
+/**
+ * 文書再掲（C-66）: 読み書き手が図の上で遠く離れた文書・ストアを、参照の塊ごとに別の図形へ分ける。
+ * BPMN では DataObjectReference / DataStoreReference が一つの文書を複数箇所に描く仕組みであり、
+ * 手描きの図でも「会計システム」のようなストアは使う場所ごとに描かれる。
+ * 一つの図形に全ての関連を集めると、遠い参照が図を横断する長い破線になる。
+ *
+ * 規則（決定的）:
+ * - 対象は doc / store。工程辺・メッセージ・プール参照・文書同士の関連を持つ文書は動かさない。
+ * - 参照をシーケンスの暫定レイヤリング列で並べ、列の隙間 > REPEAT_COL_GAP または
+ *   レーン距離 > REPEAT_LANE_GAP で塊を切る。塊が 2 つ以上のときだけ再掲する。
+ *   （隣接 2 レーン・数列以内の参照は 1 折れの関連線で十分読める。keihi / ringi-docs で確認）
+ * - 最初の塊は元の図形（id を保つ）。以降の塊は `${id}__k` の再掲図形にその塊の関連を付け替える。
+ *   どの図形も塊の書き手（無ければ最初の読み手）のレーンに置く。宣言レーンから離れた参照元の
+ *   そばへ置くことが再掲の目的であり、元の図形だけを宣言レーンに残すと参照元から遠い図形が残る。
+ * - 再掲図形は synthetic かつ repeatOf を持ち、N-260 で報告する。意味（IR）は一つの文書のまま。
+ */
+function repeatDistantDocuments(
+  nodes: NormNode[], edges: NormEdge[], ir: Ir, nodeById: Map<string, NormNode>,
+  allocateNodeId: (base: string) => string, nextDecl: () => number, report: Diagnostic[],
+): void {
+  const laneIndex = new Map(ir.lanes.map((l, i) => [l.id, i]));
+  const col = provisionalColumns(nodes, edges);
+  for (const d of [...nodes]) {
+    if (d.kind !== 'doc' && d.kind !== 'store') continue;
+    const touching = edges.filter((e) => e.from === d.id || e.to === d.id);
+    if (touching.some((e) => e.kind !== 'assoc' || e.fromPool || e.toPool)) continue;
+    const refs = touching.map((e) => ({ e, p: nodeById.get(e.from === d.id ? e.to : e.from) }));
+    if (refs.length < 2 || refs.some((r) => !r.p || isDocLike(r.p.kind))) continue;
+    const at = (r: { p?: NormNode }) => col.get(r.p!.id) ?? 0;
+    const laneOf = (r: { p?: NormNode }) => laneIndex.get(r.p!.lane) ?? 0;
+    refs.sort((a, b) => at(a) - at(b) || a.e.declIndex - b.e.declIndex);
+    const clusters: Array<typeof refs> = [];
+    for (const r of refs) {
+      const last = clusters.at(-1);
+      if (last) {
+        const maxCol = Math.max(...last.map(at));
+        const anchorLane = laneOf(last[0]!);
+        if (at(r) - maxCol <= REPEAT_COL_GAP && Math.abs(laneOf(r) - anchorLane) <= REPEAT_LANE_GAP) {
+          last.push(r);
+          continue;
+        }
+      }
+      clusters.push([r]);
+    }
+    if (clusters.length < 2) continue;
+    clusters.forEach((cluster, i) => {
+      const anchor = cluster.find((r) => r.e.to === d.id)?.p ?? cluster[0]!.p!;
+      if (i === 0) {
+        d.lane = anchor.lane;
+        return;
+      }
+      const id = allocateNodeId(`${d.id}__${i + 1}`);
+      const copy: NormNode = {
+        ...d, id, lane: anchor.lane, declIndex: nextDecl(), synthetic: true, repeatOf: d.id, onSpine: false,
+      };
+      nodes.push(copy);
+      nodeById.set(id, copy);
+      for (const { e } of cluster) {
+        if (e.from === d.id) e.from = id;
+        else e.to = id;
+      }
+    });
+    report.push({
+      level: 'info', code: 'N-260',
+      message: `文書 ${d.id} を ${clusters.length} 箇所に再掲（参照の塊ごとの図形。意味は一つの文書。C-66）`,
+    });
+  }
+}
+
+/** 戻り辺選挙前の暫定レイヤリング列（宣言順 DFS の後退辺を除いた最長路）。再掲の距離判定にだけ使う。 */
+function provisionalColumns(nodes: NormNode[], edges: NormEdge[]): Map<string, number> {
+  const trial = edges.map((e) => ({ ...e }));
+  electReturns(nodes, trial, [], false);
+  const docIds = new Set(nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
+  const fwd = trial.filter((e) => !e.isReturn && isLayeringSeq(e, docIds));
+  const col = new Map<string, number>();
+  const indeg = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  for (const e of fwd) if (indeg.has(e.to)) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1);
+  const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0).sort((a, b) => a.declIndex - b.declIndex);
+  for (const n of queue) col.set(n.id, 0);
+  for (let qi = 0; qi < queue.length; qi++) {
+    const n = queue[qi]!;
+    for (const e of fwd) {
+      if (e.from !== n.id) continue;
+      col.set(e.to, Math.max(col.get(e.to) ?? 0, (col.get(n.id) ?? 0) + 1));
+      const d = (indeg.get(e.to) ?? 0) - 1;
+      indeg.set(e.to, d);
+      if (d === 0) {
+        const next = nodes.find((x) => x.id === e.to);
+        if (next) queue.push(next);
+      }
+    }
+  }
+  return col;
 }
 
 /** 戻り辺を除くシーケンスだけを逆向きにたどり、明示・補完 end へ到達できるノードを求める。 */

@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L22
+# Layout Evolution, L1–L23
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -181,9 +181,17 @@ A blocker audit classified the remaining excess by what occupied the cells a one
 
 Outcome: bends 414 → 382, hops 65 → 61, detours 28 → 18, no diagram worse on any metric, label metrics unchanged, fuzz violation set identical to v0.2.19. The remaining excess is placement-bound: documents and annotations layered into the column of a join or gateway (7 edges), process nodes standing in the target column (8), and stores referenced from distant writers (C-66).
 
+## L23 — Repeat distant document references (2026-09-03)
+
+The last placement-bound class in L22 was a store or document referenced from far apart, such as an accounting system written near the top of a lane and again near the bottom, joined by a dotted line running the height of the diagram. BPMN's own answer is the reference: one data store, several data store references. The engine now repeats a document as reference glyphs in normalization (S-25) when its references, ordered by a provisional layering column, fall into clusters more than five columns or more than two lanes apart; every glyph is placed in the lane of its cluster's writer.
+
+Two thresholds were corrected by the corpus: a one-lane distance repeated documents in keihi and ringi-docs whose readers were only two or three columns away, adding bends and a crossing, and a three-column gap split a document that an existing placement test expects to stay whole. Fuzzing also exposed a latent hazard in the same-column far-document rail (a 28 px offset run with no reservation), which now requires narrow intermediate cells, a task writer, and a quiet south face; and read-only document chains no longer take row 0 of a spine-less lane, where a same-row read can only enter through a hook.
+
+Outcome: invoice-payment-review hops 17 → 10 with all other corpus diagrams unchanged, fuzz violation set identical to v0.2.19.
+
 ## Open items retained from the loops
 
-- **C-66** Repeated glyphs for widely read documents remain unsupported.
+- **C-66** Repeated glyphs are rule-based (S-25); a hint to force or forbid repetition per document is not yet exposed in the DSL.
 - **C-68** Conditional port opening is implemented only where static safety is proven.
 - **C-71** Density improved but still requires visual evaluation at delivery scale.
 - Pagination, phase bands, expanded subprocesses, and universal optimality remain outside the core contract.

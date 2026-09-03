@@ -1146,6 +1146,7 @@ function normalize(ir, strict2 = false) {
   };
   const declOf = (id) => nodeById.get(id).declIndex;
   let nextDecl = Math.max(0, ...nodes.map((n) => n.declIndex + 1), ...edges.map((e) => e.declIndex + 1));
+  repeatDistantDocuments(nodes, edges, ir, nodeById, allocateNodeId, () => nextDecl++, report);
   electReturns(nodes, edges, report, strict2);
   for (const n of [...nodes]) {
     if (isGatewayKind(n.kind) || isDocLike(n.kind) || isAttachedBoundary(n)) continue;
@@ -1393,6 +1394,89 @@ function normalize(ir, strict2 = false) {
     });
   }
   return { id: ir.id, title: ir.title, orientation: ir.orientation, pools: ir.pools, lanes: ir.lanes, nodes, edges, report };
+}
+var REPEAT_COL_GAP = 5;
+var REPEAT_LANE_GAP = 2;
+function repeatDistantDocuments(nodes, edges, ir, nodeById, allocateNodeId, nextDecl, report) {
+  const laneIndex = new Map(ir.lanes.map((l, i) => [l.id, i]));
+  const col = provisionalColumns(nodes, edges);
+  for (const d of [...nodes]) {
+    if (d.kind !== "doc" && d.kind !== "store") continue;
+    const touching = edges.filter((e) => e.from === d.id || e.to === d.id);
+    if (touching.some((e) => e.kind !== "assoc" || e.fromPool || e.toPool)) continue;
+    const refs = touching.map((e) => ({ e, p: nodeById.get(e.from === d.id ? e.to : e.from) }));
+    if (refs.length < 2 || refs.some((r) => !r.p || isDocLike(r.p.kind))) continue;
+    const at = (r) => col.get(r.p.id) ?? 0;
+    const laneOf = (r) => laneIndex.get(r.p.lane) ?? 0;
+    refs.sort((a, b) => at(a) - at(b) || a.e.declIndex - b.e.declIndex);
+    const clusters = [];
+    for (const r of refs) {
+      const last = clusters.at(-1);
+      if (last) {
+        const maxCol = Math.max(...last.map(at));
+        const anchorLane = laneOf(last[0]);
+        if (at(r) - maxCol <= REPEAT_COL_GAP && Math.abs(laneOf(r) - anchorLane) <= REPEAT_LANE_GAP) {
+          last.push(r);
+          continue;
+        }
+      }
+      clusters.push([r]);
+    }
+    if (clusters.length < 2) continue;
+    clusters.forEach((cluster, i) => {
+      const anchor = cluster.find((r) => r.e.to === d.id)?.p ?? cluster[0].p;
+      if (i === 0) {
+        d.lane = anchor.lane;
+        return;
+      }
+      const id = allocateNodeId(`${d.id}__${i + 1}`);
+      const copy = {
+        ...d,
+        id,
+        lane: anchor.lane,
+        declIndex: nextDecl(),
+        synthetic: true,
+        repeatOf: d.id,
+        onSpine: false
+      };
+      nodes.push(copy);
+      nodeById.set(id, copy);
+      for (const { e } of cluster) {
+        if (e.from === d.id) e.from = id;
+        else e.to = id;
+      }
+    });
+    report.push({
+      level: "info",
+      code: "N-260",
+      message: `\u6587\u66F8 ${d.id} \u3092 ${clusters.length} \u7B87\u6240\u306B\u518D\u63B2\uFF08\u53C2\u7167\u306E\u584A\u3054\u3068\u306E\u56F3\u5F62\u3002\u610F\u5473\u306F\u4E00\u3064\u306E\u6587\u66F8\u3002C-66\uFF09`
+    });
+  }
+}
+function provisionalColumns(nodes, edges) {
+  const trial = edges.map((e) => ({ ...e }));
+  electReturns(nodes, trial, [], false);
+  const docIds = new Set(nodes.filter((n) => isDocLike(n.kind)).map((n) => n.id));
+  const fwd = trial.filter((e) => !e.isReturn && isLayeringSeq(e, docIds));
+  const col = /* @__PURE__ */ new Map();
+  const indeg = new Map(nodes.map((n) => [n.id, 0]));
+  for (const e of fwd) if (indeg.has(e.to)) indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1);
+  const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0).sort((a, b) => a.declIndex - b.declIndex);
+  for (const n of queue) col.set(n.id, 0);
+  for (let qi = 0; qi < queue.length; qi++) {
+    const n = queue[qi];
+    for (const e of fwd) {
+      if (e.from !== n.id) continue;
+      col.set(e.to, Math.max(col.get(e.to) ?? 0, (col.get(n.id) ?? 0) + 1));
+      const d = (indeg.get(e.to) ?? 0) - 1;
+      indeg.set(e.to, d);
+      if (d === 0) {
+        const next = nodes.find((x) => x.id === e.to);
+        if (next) queue.push(next);
+      }
+    }
+  }
+  return col;
 }
 function nodesReachingEnd(nodes, edges) {
   const incoming = /* @__PURE__ */ new Map();
@@ -1958,10 +2042,11 @@ function assignRows(g, col, docIds) {
     if (writers.length === 0) return "";
     return writers.sort((a, b) => col.get(b) - col.get(a) || a.localeCompare(b))[0];
   };
+  const readOnlyDoc = (ch) => ch.nodes.every((m) => isDocLike(m.kind)) && !g.edges.some((e) => ch.nodes.some((m) => m.id === e.to));
   const packed = /* @__PURE__ */ new Set();
   const placeChain = (ch) => {
     const res = reserved.get(ch.lane);
-    const startRow = spineHasLane.has(ch.lane) ? 1 : 0;
+    const startRow = spineHasLane.has(ch.lane) || readOnlyDoc(ch) ? 1 : 0;
     let r = startRow;
     while (res.some((iv) => iv.row === r && iv.c0 <= ch.c1 && ch.c0 <= iv.c1)) r++;
     res.push({ row: r, c0: ch.c0, c1: ch.c1 });
@@ -2288,6 +2373,16 @@ function nodeBetweenOnRow(ctx, lane, row, c0, c1) {
   for (let c = c0; c <= c1; c++) if (ctx.occupied.has(`${lane}:${row}:${c}`)) return true;
   return false;
 }
+function railClear(ctx, col, a, b) {
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  for (const [key2, gr] of ctx.globalRow) {
+    if (gr <= lo || gr >= hi) continue;
+    const i = key2.lastIndexOf(":");
+    const occ = ctx.occupied.get(`${key2.slice(0, i)}:${key2.slice(i + 1)}:${col}`);
+    if (occ !== void 0 && ctx.nodeById.get(occ)?.kind !== "doc") return false;
+  }
+  return true;
+}
 function columnClear(ctx, col, a, b) {
   const [lo, hi] = a < b ? [a, b] : [b, a];
   for (const [key2, gr] of ctx.globalRow) {
@@ -2516,7 +2611,7 @@ function planForward(ctx, e) {
         ]
       };
     }
-    if (v.node.kind === "doc" && u.col === v.col && gV > gU) {
+    if (v.node.kind === "doc" && u.col === v.col && gV > gU && u.node.kind === "task" && railClear(ctx, u.col, gU, gV) && !ctx.g.edges.some((o) => o.id !== e.id && o.to === u.node.id && o.kind !== "seq")) {
       const rail = nodeCX(e.from, 28);
       return {
         edgeId: e.id,

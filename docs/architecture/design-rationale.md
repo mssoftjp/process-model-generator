@@ -124,7 +124,7 @@ R3 semantic ownership
 - The engine produces explanatory diagrams, not executable BPMN deployments.
 - Sequence, message, and association semantics constrain routing.
 - Return edges are selected from actual cycles, not declaration order.
-- Expanded subprocess layout, automatic repeated glyphs, pagination, and phase bands remain outside the current core unless their contracts become explicit.
+- Expanded subprocess layout, pagination, and phase bands remain outside the current core unless their contracts become explicit. Repeated document glyphs became part of the core once their rule was made explicit (S-25): the IR still holds one document, and the repetition is a reported normalization step.
 - Human organizational modeling and unresolved business meaning remain outside the layout engine.
 
 ## Lessons from implementation

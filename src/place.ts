@@ -278,10 +278,15 @@ function assignRows(g: NormGraph, col: Map<string, number>, docIds: Set<string>)
     if (writers.length === 0) return '';
     return writers.sort((a, b) => (col.get(b)! - col.get(a)!) || a.localeCompare(b))[0]!;
   };
+  // 読み手だけを持つ文書類は、本流の無いレーンでも行 0 に置かない。読み手と同じ行に並ぶと
+  // 文書→工程の関連は頂点入りしかなく 3 折れになる。一段下なら行先行 L の 1 折れで済む。
+  const readOnlyDoc = (ch: Chain) =>
+    ch.nodes.every((m) => isDocLike(m.kind)) &&
+    !g.edges.some((e) => ch.nodes.some((m) => m.id === e.to));
   const packed = new Set<Chain>();
   const placeChain = (ch: Chain) => {
     const res = reserved.get(ch.lane)!;
-    const startRow = spineHasLane.has(ch.lane) ? 1 : 0;
+    const startRow = spineHasLane.has(ch.lane) || readOnlyDoc(ch) ? 1 : 0;
     let r = startRow;
     while (res.some((iv) => iv.row === r && iv.c0 <= ch.c1 && ch.c0 <= iv.c1)) r++;
     res.push({ row: r, c0: ch.c0, c1: ch.c1 });

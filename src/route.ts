@@ -416,6 +416,18 @@ function nodeBetweenOnRow(ctx: Ctx, lane: string, row: number, c0: number, c1: n
   return false;
 }
 
+/** 列 col の中心 +28px のレールを a..b の間で通れるか: 途中のセルが空か幅の狭い doc だけ */
+function railClear(ctx: Ctx, col: number, a: number, b: number): boolean {
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  for (const [key, gr] of ctx.globalRow) {
+    if (gr <= lo || gr >= hi) continue;
+    const i = key.lastIndexOf(':');
+    const occ = ctx.occupied.get(`${key.slice(0, i)}:${key.slice(i + 1)}:${col}`);
+    if (occ !== undefined && ctx.nodeById.get(occ)?.kind !== 'doc') return false;
+  }
+  return true;
+}
+
 /** 列 col の中心線を、通し縦位置 a..b の間(両端は含まない)で垂直に通れるか */
 function columnClear(ctx: Ctx, col: number, a: number, b: number): boolean {
   const [lo, hi] = a < b ? [a, b] : [b, a];
@@ -763,7 +775,13 @@ function planForward(ctx: Ctx, e: NormEdge): EdgePlan {
     }
     // 同じ列の遠い書類は中心線が手前の書類で塞がる。次列の XOR 溝ではなく、
     // 書き手の直後を通って右から入れる。長いスタブの競合は OARSP が実座標で解く。
-    if (v.node.kind === 'doc' && u.col === v.col && gV > gU) {
+    // レールは列中心 +28px を予約なしで縦走するので、途中のセルが幅の狭い文書だけで、
+    // 書き手がタスク(下面のスロット分離を受ける)であり、下面に他の入りが無いときに限る。
+    if (
+      v.node.kind === 'doc' && u.col === v.col && gV > gU && u.node.kind === 'task' &&
+      railClear(ctx, u.col, gU, gV) &&
+      !ctx.g.edges.some((o) => o.id !== e.id && o.to === u.node.id && o.kind !== 'seq')
+    ) {
       const rail = nodeCX(e.from, 28);
       return {
         edgeId: e.id, fromSide: 'bottom', toSide: 'right', pattern: 'row-approach',
