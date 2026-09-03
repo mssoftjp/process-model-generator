@@ -25,6 +25,10 @@ Historical results remain evidence about past decisions, not claims about the cu
 - `reference/bpmn-icon-catalog.flow`: an English-language source catalog for supported BPMN glyphs. Its disconnected symbols are intentional, so render it in lax mode rather than treating it as a deliverable process.
 - `reference/bpmn-icon-catalog.svg`: the rendered catalog corresponding to that source.
 
+## Evaluation tools
+
+- [`scripts/eval/`](../scripts/eval/README.md): development scripts that snapshot a local corpus, compare two snapshots figure by figure, build an overlay page for judging appearance across commits, and run the fuzz generator for thousands of seeds.
+
 ## Skill documentation
 
 Agent-facing instructions live under [`skills/process-model-generator/`](../skills/process-model-generator/). The Skill's `references/` directory is packaged with the Skill and is separate from these developer documents.
