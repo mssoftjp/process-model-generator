@@ -1,4 +1,4 @@
-# Layout Evolution, L1–L32
+# Layout Evolution, L1–L33
 
 Status: historical design record. This condensed timeline preserves the evidence and rejected approaches that shaped the current engine. It is not a release changelog or a current behavior specification; use [the style specification](../architecture/style-spec.md) and tests for current contracts.
 
@@ -246,6 +246,18 @@ Outcome: corpus unchanged (28 diagrams byte-identical); the regression test cove
 The generator extension of L31 (a sequence flow from a boundary event to a node of the same pool) produced 98 violations in 4,000 cases. One cause explained most of them: the return election walks the graph by node, and a boundary event has no incoming sequence flow, so a flow from it back to an earlier node never closed a cycle. It was layered forward, which pushed the boundary event ahead of the node it returns to while S-53 pins it to its activity; the relaxation could not converge, the boundary event ended up columns left of its activity, and every line leaving the drawn circle ran backwards through it. The election now traverses a boundary event's edges as edges of its activity, so such a flow is a return edge. Two smaller causes remained: a two-point vertical from the boundary event to a node directly below was diagonal because the circle sits on the activity's right half, and the return pattern's direct vertical exit used the event's outward vertex, which receives its message; both now fall to the gutter forms, and a same-row target is reached through the gutter left of it. The last case was unrelated to boundary events: the data-association improver placed crowded ports on the bounding box of an event instead of its circle.
 
 Outcome: the extended generator is now part of the test suite; 2,000 seeds × 2 orientations with it give zero violations; corpus unchanged. The specification moved to v1.8.
+
+## L33 — Shorten blocked same-column artifact writes (2026-09-04)
+
+A task writing document-like outputs in its own column could use a direct drop only when no nearer node blocked the column center. Otherwise it fell through to the target-row channel, crossed to the target column's entry gutter, and returned to each artifact with four bends. The accepted route uses the existing outgoing gutter immediately right of the shared column and enters the artifacts from their right edges with two bends. It applies only when every output is an otherwise-unshared document-like node in that same lane and column; mixed groups, shared artifacts, and document-to-activity reads keep their existing port-selection and refinement paths.
+
+Outcome: across the 20-diagram development corpus, both orientations retained zero oracle violations; with the source model held fixed, invoice-payment-review bends fell 44 → 35, excess bends 16 → 6, area fell 1.8%, and every other diagram was unchanged. The specification moved to v1.9.
+
+## L34 — Place terminal artifacts after their producer (2026-09-05)
+
+Write-only documents and stores were pulled back into their writer's column even when the writer flowed directly to an end event. That made completed evidence look concurrent with the producing activity and forced artifact lines to turn beside it. Terminal artifacts now remain in the end event's downstream column, reusing the ordinary forward placement. When that column is also the vertical corridor from a black-box pool to a receiving event, the artifacts move one additional column forward; keeping the corridor clear is smaller than adding another message-route exception.
+
+Outcome: only invoice-payment-review changed in the 20-diagram corpus. Bends fell 35 → 34, detour edges 3 → 1, crossings stayed 8, excess bends stayed 6, area was unchanged, and oracle violations stayed zero. The specification moved to v1.10.
 
 ## Open items retained from the loops
 

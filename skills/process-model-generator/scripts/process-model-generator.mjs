@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import { readFileSync as readFileSync2, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync as readFileSync3, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 
 // src/bpmn-kinds.ts
@@ -1243,7 +1243,7 @@ function normalize(ir, strict2 = false) {
     const outs = edges.filter((e) => e.from === n.id && e.kind === "seq");
     if (ins.length <= 1 || outs.length <= 1) continue;
     const joinId = allocateNodeId(`x_j_${n.id}`);
-    const join2 = {
+    const join3 = {
       // event-based gateway は分岐専用なので、合流側は通常 XOR merge とする。
       id: joinId,
       kind: n.kind,
@@ -1255,13 +1255,13 @@ function normalize(ir, strict2 = false) {
       synthetic: true,
       onSpine: false
     };
-    nodes.push(join2);
-    nodeById.set(join2.id, join2);
-    for (const e of ins) e.to = join2.id;
+    nodes.push(join3);
+    nodeById.set(join3.id, join3);
+    for (const e of ins) e.to = join3.id;
     edges.push({
-      id: `e_syn_${join2.id}`,
+      id: `e_syn_${join3.id}`,
       kind: "seq",
-      from: join2.id,
+      from: join3.id,
       to: n.id,
       mainHint: false,
       declIndex: nextDecl++,
@@ -1270,7 +1270,7 @@ function normalize(ir, strict2 = false) {
       isReturn: false,
       onSpine: false
     });
-    report.push({ level: "info", code: "N-211", message: `\u5408\u6D41\u30FB\u5206\u5C90\u517C\u52D9 ${n.id} \u3092 ${join2.id} + ${n.id} \u306B\u5206\u96E2` });
+    report.push({ level: "info", code: "N-211", message: `\u5408\u6D41\u30FB\u5206\u5C90\u517C\u52D9 ${n.id} \u3092 ${join3.id} + ${n.id} \u306B\u5206\u96E2` });
   }
   const pools = buildPoolIndex(ir);
   const processPools = [];
@@ -1382,6 +1382,53 @@ function normalize(ir, strict2 = false) {
         });
         report.push({ level: "warning", code: "W-221", message: `\u7D42\u4E86\u30A4\u30D9\u30F3\u30C8 ${en.id} \u3092 ${t.id} \u306E\u5F8C\u306B\u88DC\u5B8C\u3002\u7D42\u4E86\u7D50\u679C\u3092\u78BA\u8A8D\u3059\u308B` });
       }
+    }
+    const members = nodes.filter((n) => !isDocLike(n.kind) && inPool(n, pool));
+    const ids = new Set(members.map((n) => n.id));
+    const links = edges.filter((e) => e.kind === "seq" && ids.has(e.from) && ids.has(e.to)).map((e) => [e.from, e.to]);
+    for (const n of members) if (isAttachedBoundary(n) && ids.has(n.attachedTo)) links.push([n.attachedTo, n.id]);
+    const reachable = (reverse) => {
+      const adjacency = /* @__PURE__ */ new Map();
+      for (const [a, b] of links) {
+        const from = reverse ? b : a;
+        const to = reverse ? a : b;
+        const next = adjacency.get(from) ?? [];
+        next.push(to);
+        adjacency.set(from, next);
+      }
+      const seen = new Set(members.filter((n) => n.kind === (reverse ? "end" : "start") || isOutOfBandHandler(n)).map((n) => n.id));
+      for (const id of seen) for (const next of adjacency.get(id) ?? []) seen.add(next);
+      return seen;
+    };
+    const fromStart = reachable(false);
+    const toEnd = reachable(true);
+    const cancelled = /* @__PURE__ */ new Set();
+    const successors = (id) => links.filter(([a]) => a === id).map(([, b]) => b);
+    const terminates = (id, seen = /* @__PURE__ */ new Set()) => {
+      if (seen.has(id) || links.filter(([, b]) => b === id).length > 1) return false;
+      seen.add(id);
+      const n = nodeById.get(id);
+      if (n?.kind === "end") return n.subtype === "terminate";
+      const next = successors(id);
+      return next.length === 1 && terminates(next[0], seen);
+    };
+    for (const fork of members.filter((n) => n.kind === "and" && !n.subtype && fromStart.has(n.id))) {
+      const branches = successors(fork.id);
+      if (branches.length < 2 || !branches.some((id) => terminates(id))) continue;
+      const seen = new Set(branches);
+      for (const id of seen) {
+        cancelled.add(id);
+        for (const next of successors(id)) if (next !== fork.id) seen.add(next);
+      }
+    }
+    for (const n of members) {
+      if (n.synthetic || isOutOfBandHandler(n)) continue;
+      const code = !fromStart.has(n.id) ? "226" : !toEnd.has(n.id) && !cancelled.has(n.id) ? "227" : void 0;
+      if (code) report.push({
+        level: strict2 ? "error" : "warning",
+        code: `${strict2 ? "E" : "W"}-${code}`,
+        message: code === "226" ? `${n.id} \u306F\u958B\u59CB\u30FB\u72EC\u7ACB\u30CF\u30F3\u30C9\u30E9\u304B\u3089\u5230\u9054\u3067\u304D\u306A\u3044\u3002\u5FAA\u74B0\u3092\u542B\u3080\u5B64\u7ACB\u90E8\u5206\u306E\u5165\u53E3\u3092\u78BA\u8A8D\u3059\u308B` : `${n.id} \u304B\u3089\u7D42\u4E86\u30FB\u72EC\u7ACB\u30CF\u30F3\u30C9\u30E9\u3078\u5230\u9054\u3067\u304D\u306A\u3044\u3002\u7D42\u4E86\u7D50\u679C\u307E\u305F\u306F\u7D99\u7D9A\u5148\u3092\u78BA\u8A8D\u3059\u308B`
+      });
     }
   }
   const starts = nodes.filter((n) => n.kind === "start").sort((a, b) => a.declIndex - b.declIndex);
@@ -2278,10 +2325,11 @@ function assignRows({ g, col, docIds, nodeById }) {
     }
   }
   const writeOnlyDoc = (ch) => ch.nodes.every((m) => m.kind === "doc") && !g.edges.some((e) => e.kind !== "assoc" && ch.nodes.some((m) => m.id === e.from || m.id === e.to)) && !g.edges.some((e) => e.kind === "assoc" && ch.nodes.some((m) => m.id === e.from));
+  const writersOf = (ch) => [...new Set(
+    g.edges.filter((e) => e.kind === "assoc" && ch.nodes.some((m) => m.id === e.to)).map((e) => e.from)
+  )];
   const lastWriterOf = (ch) => {
-    const writers = [...new Set(
-      g.edges.filter((e) => e.kind === "assoc" && ch.nodes.some((m) => m.id === e.to)).map((e) => e.from)
-    )];
+    const writers = writersOf(ch);
     if (writers.length === 0) return "";
     return writers.sort((a, b) => col.get(b) - col.get(a) || a.localeCompare(b))[0];
   };
@@ -2305,6 +2353,39 @@ function assignRows({ g, col, docIds, nodeById }) {
       packed.add(one);
       placeChain(one);
     }
+  }
+  const laneWritersOf = (ch) => writersOf(ch).filter((id) => nodeById.get(id)?.lane === ch.lane);
+  const outputStore = (ch) => spineHasLane.has(ch.lane) && ch.nodes.length === 1 && ch.nodes.every((m) => m.kind === "store" && g.edges.some((e) => e.kind === "assoc" && e.to === m.id) && !g.edges.some((e) => e.from === m.id || e.kind !== "assoc" && e.to === m.id)) && laneWritersOf(ch).some((id) => g.edges.some((e) => e.kind === "seq" && !e.synthetic && (e.from === id || e.to === id)));
+  const outputStoreGroups = /* @__PURE__ */ new Map();
+  for (const ch of chains.filter(outputStore)) {
+    const writers = laneWritersOf(ch).sort();
+    if (writers.length === 0) continue;
+    const key2 = `${ch.lane}:${writers.join(",")}`;
+    outputStoreGroups.set(key2, [...outputStoreGroups.get(key2) ?? [], ch]);
+  }
+  for (const group2 of [...outputStoreGroups.values()].sort((a, b) => a[0].c0 - b[0].c0)) {
+    const lane = group2[0].lane;
+    const targetRow = spineHasLane.has(lane) ? 1 : 0;
+    if (group2.every((ch) => row.get(ch.nodes[0].id) === targetRow)) continue;
+    const res = reserved.get(lane);
+    for (const ch of group2) {
+      const oldRow = row.get(ch.nodes[0].id);
+      const at = res.findIndex((iv) => iv.row === oldRow && iv.c0 === ch.c0 && iv.c1 === ch.c1);
+      if (at >= 0) res.splice(at, 1);
+    }
+    const writers = laneWritersOf(group2[0]);
+    let start = Math.max(...writers.map((id) => col.get(id) ?? 0)) + 1;
+    for (; ; ) {
+      const overlap2 = res.filter((iv) => iv.row === targetRow && iv.c0 <= start + group2.length - 1 && start <= iv.c1);
+      if (overlap2.length === 0) break;
+      start = Math.max(...overlap2.map((iv) => iv.c1)) + 1;
+    }
+    group2.sort((a, b) => a.firstDecl - b.firstDecl).forEach((ch, i) => {
+      const node = ch.nodes[0];
+      col.set(node.id, start + i);
+      row.set(node.id, targetRow);
+      res.push({ row: targetRow, c0: start + i, c1: start + i });
+    });
   }
   for (const n of g.nodes) {
     if (!isAttachedBoundary(n)) continue;
@@ -3160,6 +3241,34 @@ function assocDropStraight({ ctx, e, u, v, gU, gV }) {
     points: verticalLine(e.from, "bottom", e.to, "top")
   };
 }
+function assocSameColumnSide({ ctx, e, u, v, gU, gV }) {
+  if (e.kind !== "assoc" || isDocLike(u.node.kind) || !isDocLike(v.node.kind) || u.col !== v.col || gU === gV) return void 0;
+  const outputs = ctx.g.edges.filter((o) => o.kind === "assoc" && o.from === e.from);
+  if (!outputs.every((o) => {
+    const target = ctx.nodeById.get(o.to);
+    return target !== void 0 && isDocLike(target.kind) && target.lane === u.lane && ctx.p.col.get(target.id) === u.col && !ctx.g.edges.some(
+      (peer) => peer.id !== o.id && (peer.from === target.id || peer.to === target.id)
+    );
+  })) return void 0;
+  const g1 = u.col + 1;
+  noteLabelNeed(ctx, e, g1);
+  noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
+  noteRowRun(ctx, v.lane, v.row, v.col, gutterScale(g1), e);
+  const run = allocGutter(ctx, g1, "exit", gU, gV);
+  const srcY = fallbackRightY(e, e.from);
+  return {
+    edgeId: e.id,
+    fromSide: "right",
+    toSide: "right",
+    pattern: "row-approach",
+    points: [
+      { x: portX(e.from, "right"), y: srcY },
+      { x: gutterX(g1, "exit", run), y: srcY },
+      { x: gutterX(g1, "exit", run), y: portY(e.to, "right") },
+      { x: portX(e.to, "right"), y: portY(e.to, "right") }
+    ]
+  };
+}
 function assocRiseStraight({ ctx, e, u, v, gU, gV }) {
   if (e.kind !== "assoc") return void 0;
   if (!(u.col === v.col && gV < gU && isDocLike(u.node.kind) && !isDocLike(v.node.kind) && faceQuiet(ctx, v.node.id, "bottom", e) && bottomOutFree(ctx, v, gV) && (bottomFree(v.node) || eventBottomOpen(ctx, v.node)) && // 文書の上辺は行違いの書き手(drop / チャネル降下)が使い得る。計画済みなら入口面で判定し、
@@ -3543,6 +3652,7 @@ function channelApproach({ ctx, e, u, v, gU, gV }) {
 }
 var FORWARD_PATTERNS = [
   assocDropStraight,
+  assocSameColumnSide,
   assocRiseStraight,
   assocIntoNonDoc,
   assocDropToDoc,
@@ -5299,7 +5409,7 @@ var VIEWPORT_HEIGHT = 900;
 var SOFT_FONT_LIMIT = 9;
 var HARD_LANE_FONT_LIMIT = 6;
 var TIME_SCREEN_LIMIT = 2;
-function diagnosePageBudget(geometry, strict2 = false) {
+function diagnosePageBudget(geometry, _strict = false) {
   const width = Math.max(1, geometry.width);
   const height = Math.max(1, geometry.height);
   const vertical = geometry.orientation === "vertical";
@@ -5326,14 +5436,14 @@ function diagnosePageBudget(geometry, strict2 = false) {
     diagnostics.push({
       level: "warning",
       code: "W-440",
-      message: `\u5358\u4E00\u30D3\u30E5\u30FC\u3060\u3051\u3067\u306E\u63D0\u4F9B\u306B\u4E0D\u5411\u304D\u3002\u6982\u8981\u56F3\u3068\u5FC5\u8981\u306A\u8A73\u7D30\u56F3\u3078\u5206\u3051\u308B\uFF08${summary}\uFF09`
+      message: `\u5168\u4F53\u3092\u7E2E\u5C0F\u305B\u305A\u3001\u539F\u5BF8\u306E\u8A73\u7D301\u679A\u3092\u30B9\u30AF\u30ED\u30FC\u30EB\u30FB\u62E1\u5927\u3057\u3066\u8AAD\u3080\uFF08${summary}\uFF09`
     });
   }
   if (metrics.laneFont < HARD_LANE_FONT_LIMIT) {
     diagnostics.push({
-      level: strict2 ? "error" : "warning",
-      code: strict2 ? "E-441" : "W-441",
-      message: `\u30EC\u30FC\u30F3\u8EF8\u306E\u7E2E\u5C0F\u3067\u7269\u7406\u7684\u306B\u5224\u8AAD\u3067\u304D\u306A\u3044\u3002\u5206\u5272\u3057\u3066\u304B\u3089\u63D0\u4F9B\u3059\u308B\uFF08${summary}\uFF09`
+      level: "warning",
+      code: "W-441",
+      message: `\u753B\u9762\u306B\u53CE\u3081\u308B\u7E2E\u5C0F\u3067\u306F\u5224\u8AAD\u56F0\u96E3\u3002\u539F\u5BF8\u306E\u8A73\u7D301\u679A\u3092\u4FDD\u3061\u3001\u30B9\u30AF\u30ED\u30FC\u30EB\u30FB\u62E1\u5927\u3092\u63D0\u4F9B\u3059\u308B\uFF08${summary}\uFF09`
     });
   }
   return { metrics, diagnostics };
@@ -6533,7 +6643,7 @@ function renderSvg(geo, version = "dev") {
   );
   parts.push(`<rect width="${geo.width}" height="${geo.height}" fill="${C.bg}"/>`);
   if (geo.title) {
-    parts.push(text(geo.title, 24, 24 + 18, TITLE_FONT_SIZE, C.title, "start", 600));
+    parts.push(text(geo.title, 24, 24 + 18, TITLE_FONT_SIZE, C.title, "start", 600, true));
   }
   const vertical = geo.orientation === "vertical";
   const poolHeaderT = geo.pools.length > 0 ? 34 : 0;
@@ -6573,13 +6683,13 @@ function renderSvg(geo, version = "dev") {
     if (dupLaneLabel.has(lane.label)) return out.join("\n");
     if (vertical) {
       out.push(
-        `<text x="${ix + iw / 2}" y="${iy + laneHeaderT / 2}" font-size="12" fill="${C.subText}" text-anchor="middle" dominant-baseline="central">${esc(lane.label)}</text>`
+        `<text x="${ix + iw / 2}" y="${iy + laneHeaderT / 2}" font-size="12" textLength="${measureText(lane.label, 12).toFixed(1)}" lengthAdjust="spacingAndGlyphs" fill="${C.subText}" text-anchor="middle" dominant-baseline="central">${esc(lane.label)}</text>`
       );
     } else {
       const lx = ix + laneHeaderT / 2;
       const ly = lane.y + lane.h / 2;
       out.push(
-        `<text x="${lx}" y="${ly}" font-size="12" fill="${C.subText}" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(lane.label)}</text>`
+        `<text x="${lx}" y="${ly}" font-size="12" textLength="${measureText(lane.label, 12).toFixed(1)}" lengthAdjust="spacingAndGlyphs" fill="${C.subText}" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(lane.label)}</text>`
       );
     }
     return out.join("\n");
@@ -6621,8 +6731,9 @@ function renderSvg(geo, version = "dev") {
     band.push(...laneGs);
   }
   parts.push(layer("layer-band", band));
+  const emphasizedNodes = new Set(geo.edges.filter((e) => e.mainHint).flatMap((e) => [e.from, e.to]));
   parts.push(layer("layer-edges", geo.edges.map((e) => group(gid("edge", e.id), renderEdge(e)))));
-  parts.push(layer("layer-nodes", geo.nodes.map((n) => group(gid("node", n.id), renderNode(n)))));
+  parts.push(layer("layer-nodes", geo.nodes.map((n) => group(gid("node", n.id), renderNode(n, emphasizedNodes.has(n.id))))));
   parts.push("</svg>");
   return parts.join("\n");
 }
@@ -6648,9 +6759,9 @@ function idAllocator() {
     return id;
   };
 }
-function renderNode(n) {
-  const stroke = n.provisional ? C.provisional : n.onSpine ? C.nodeSpine : C.node;
-  const sw = n.onSpine ? 1.6 : 1.25;
+function renderNode(n, emphasized) {
+  const stroke = n.provisional ? C.provisional : emphasized ? C.nodeSpine : C.node;
+  const sw = emphasized ? 1.6 : 1.25;
   const out = [];
   if (n.kind === "task") {
     const isCall = n.subtype === "call";
@@ -6795,8 +6906,8 @@ function renderEdge(e) {
   const assocKind = e.assocKind ?? (isAssoc ? "data" : void 0);
   const undirected = isAssoc && assocKind === "undirected";
   const both = isAssoc && assocKind === "both";
-  const stroke = e.provisional ? C.provisional : e.onSpine ? C.edgeSpine : C.edge;
-  const sw = e.onSpine ? 2 : isAssoc ? 1.2 : 1.3;
+  const stroke = e.provisional ? C.provisional : e.mainHint ? C.edgeSpine : isMsg ? "#236e91" : C.edge;
+  const sw = e.mainHint ? 2 : isAssoc ? 1.2 : isMsg ? 1.6 : 1.3;
   const dash = e.provisional ? ' stroke-dasharray="5 3"' : isAssoc ? assocKind === "data" ? ' stroke-dasharray="2 4" stroke-linecap="round"' : ' stroke-dasharray="1 3"' : isMsg ? ' stroke-dasharray="7 4"' : "";
   const pts = e.points;
   const last = pts[pts.length - 1];
@@ -6809,7 +6920,7 @@ function renderEdge(e) {
   const assocAttr = isAssoc ? ` data-assoc="${assocKind}"` : "";
   const defaultAttr = e.isDefault ? ' data-edge-default="true"' : "";
   const condAttr = e.isConditional ? ' data-edge-conditional="true"' : "";
-  const mainAttr = e.mainHint || e.onSpine ? ' data-main-path="true"' : "";
+  const mainAttr = e.mainHint ? ' data-main-path="true"' : "";
   const returnAttr = e.returnHint ? ' data-return-hint="true"' : "";
   out.push(`<path d="${pathWithHops(linePts, e.hops)}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${assocAttr}${defaultAttr}${condAttr}${mainAttr}${returnAttr}/>`);
   const bx = last.x - dx * ARROW_L;
@@ -6973,7 +7084,7 @@ function compile(source, opts = {}) {
       return { ...lg, x: lg.y, y: lg.x + titleShift, w: lg.h, h: lg.w, cx: lg.cy, cy: lg.cx + titleShift };
     });
     const band = (b) => vertical ? { ...b, x: b.y, y: b.x + titleShift, w: b.h, h: b.w } : b;
-    const titleNeed = normalized.title ? PAD + measureText(normalized.title, TITLE_FONT_SIZE) + PAD : 0;
+    const titleNeed = normalized.title ? PAD + measureText(normalized.title, TITLE_FONT_SIZE) * 1.25 + PAD : 0;
     const geometry2 = {
       title: normalized.title,
       orientation,
@@ -7031,7 +7142,7 @@ function compile(source, opts = {}) {
     if (isDocLike(kindOf.get(e.from) ?? "task") || isDocLike(kindOf.get(e.to) ?? "task")) continue;
     if (e.isReturn && placement.col.get(e.to) >= placement.col.get(e.from)) {
       diags.push({
-        level: "warning",
+        level: strict2 ? "error" : "warning",
         code: "W-252",
         message: `\u623B\u308A\u8FBA ${e.from} -> ${e.to} \u304C\u6642\u9593\u8EF8\u306E\u9806\u65B9\u5411\u306B\u914D\u7F6E\u3055\u308C\u305F\uFF08\u30A8\u30F3\u30B8\u30F3\u4E0D\u5909\u6761\u4EF6\u306E\u7834\u308C\u306E\u7591\u3044\uFF09`
       });
@@ -7066,7 +7177,7 @@ function compile(source, opts = {}) {
   }
   const pageBudget = diagnosePageBudget(geometry, strict2);
   diags.push(...pageBudget.diagnostics);
-  if (pageBudget.diagnostics.some((d) => d.level === "error")) {
+  if (strict2 && diags.some((d) => d.level === "error")) {
     throw new CompileError(diags);
   }
   return {
@@ -7129,9 +7240,52 @@ function compareScore2(a, b) {
   return a.length - b.length;
 }
 
+// src/cli.ts
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+// src/detail-sheet.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+var esc2 = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function detailSheet(directory, orientation, version = "dev") {
+  const detail = JSON.parse(readFileSync(join(directory, "detail.json"), "utf8"));
+  if (!detail.complete) throw new Error(`Incomplete source coverage: ${JSON.stringify(detail.missing)}`);
+  let y = 0, width = 0;
+  const parts = [];
+  const diagnostics = [];
+  for (const [i, view] of detail.views.entries()) {
+    const source = readFileSync(join(directory, view.file), "utf8");
+    const ir = parse(source).ir;
+    for (const e of view.edges) if (!ir.edges.some((edge) => edge.kind === "seq" && edge.from === e.fromId && edge.to === e.toId && (!e.label || edge.label === e.label))) throw new Error(`Scope connection missing: ${view.id} ${JSON.stringify(e)}`);
+    const r = compile(source, { strict: true, orientation, version });
+    diagnostics.push(...r.diagnostics);
+    width = Math.max(width, r.geometry.width);
+    const parent = detail.views.find((v) => v.id === view.parent);
+    const heading = i ? `${view.label} \u2014 inside ${parent?.label ?? "Whole process"}` : "Whole process";
+    parts.push(`<text x="24" y="${y + 24}" font-size="16">${esc2(heading)}</text>`);
+    const inner = r.svg.replace("<svg ", `<svg x="0" y="${y + 36}" `).replace(/(?<=\s)id="([^"]+)"/g, `id="scope${i}-$1"`);
+    parts.push(inner);
+    y += r.geometry.height + 64;
+  }
+  for (const item of detail.metadata) {
+    const title = `${item.label} \u2014 ${item.kind === "attribute" ? item.name.replace(/^.*}/, "") + " = " + item.value : "Extension details"}`;
+    const content = (item.lines ?? []).join("\n");
+    for (const line of [...wrapText(title, 850, 14), ...content.split("\n").flatMap((line2) => wrapText(line2, 850, 14))]) {
+      parts.push(`<text x="24" y="${y + 24}" font-size="14">${esc2(line)}</text>`);
+      y += 22;
+    }
+    y += 24;
+    width = Math.max(width, 920);
+  }
+  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${y}" viewBox="0 0 ${width} ${y}" font-family="sans-serif"><metadata>${esc2(JSON.stringify(detail))}</metadata><rect width="100%" height="100%" fill="white"/>${parts.join("\n")}</svg>`, diagnostics, width, height: y };
+}
+
 // src/eval.ts
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync as readFileSync2, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { basename, join as join2 } from "node:path";
 var HEADERS = ["claim", "kind", "view:id", "status", "reason"];
 var CONSULTING_HEADERS = ["claim", "kind", "source", "view:id", "status", "reason"];
 var STATUSES = /* @__PURE__ */ new Set(["modeled", "?", "excluded", "unresolved"]);
@@ -7146,6 +7300,7 @@ var CONSULTING_KINDS = /* @__PURE__ */ new Set([
   "diagnostic"
 ]);
 var VIEW_BOUNDARIES = /* @__PURE__ */ new Set(["outcome", "handoff", "subprocess", "trigger", "time", "variant"]);
+var SEMANTIC_INVARIANTS = ["scope/trigger", "participant/lane", "entry/precondition", "exit/continuation", "exception/return/time", "artifact/system/control"];
 function cells(line) {
   const trimmed = line.trim().replace(/^\|/u, "").replace(/\|$/u, "");
   return trimmed.split("|").map((cell) => cell.trim());
@@ -7208,7 +7363,7 @@ function parseLedger(markdown, consulting = false) {
     }
     if (consulting) {
       const locators = source.split(";").map((value) => value.trim()).filter(Boolean);
-      if (locators.some((value) => !/^[a-z][a-z0-9-]*:.+/u.test(value)) || kind === "conflict" && locators.length < 2) {
+      if (locators.length === 0 || locators.some((value) => !/^[a-z][a-z0-9-]*:.+/u.test(value)) || kind === "conflict" && locators.length < 2) {
         findings.push({
           level: "error",
           code: "E-515",
@@ -7268,7 +7423,7 @@ function evaluateDelivery(options) {
   const findings = [];
   let markdown = "";
   try {
-    markdown = readFileSync(options.reportPath, "utf8");
+    markdown = readFileSync2(options.reportPath, "utf8");
   } catch {
     findings.push({
       level: "error",
@@ -7286,8 +7441,8 @@ function evaluateDelivery(options) {
   }
   const views = [];
   for (const name of flowFiles) {
-    const flowPath = join(options.directory, name);
-    const source = readFileSync(flowPath, "utf8");
+    const flowPath = join2(options.directory, name);
+    const source = readFileSync2(flowPath, "utf8");
     const parsed = parse(source);
     const id = parsed.ir.id;
     if (!id) {
@@ -7303,10 +7458,10 @@ function evaluateDelivery(options) {
       continue;
     }
     try {
-      const svgPath = join(options.directory, `${basename(name, ".flow")}.svg`);
-      const delivered = existsSync(svgPath) ? readFileSync(svgPath, "utf8") : void 0;
+      const svgPath = join2(options.directory, `${basename(name, ".flow")}.svg`);
+      const delivered = existsSync(svgPath) ? readFileSync2(svgPath, "utf8") : void 0;
       const result = compile(source, { strict: true, version: options.version });
-      views.push({ id, file: name, ir: parsed.ir, diagnostics: result.diagnostics });
+      views.push({ id, file: name, ir: parsed.ir, diagnostics: result.diagnostics, svgHash: createHash("sha256").update(result.svg).digest("hex") });
       if (delivered === void 0) {
         findings.push({ level: "error", code: "E-500", message: `${name}: \u5BFE\u5FDC\u3059\u308B SVG \u304C\u306A\u3044` });
       } else if (delivered !== result.svg) {
@@ -7419,34 +7574,47 @@ function evaluateDelivery(options) {
       }
     }
   }
-  const oversized = views.some((view) => view.diagnostics.some((diagnostic) => diagnostic.code === "W-440"));
-  if (oversized && (flowFiles.length < 2 || !options.parentId)) {
-    findings.push({
-      level: "error",
-      code: "E-517",
-      message: "W-440 \u3092\u542B\u3080\u6210\u679C\u7269\u306F\u3001\u8907\u6570 .flow \u3068 --parent \u306B\u3088\u308B\u89AA\u5B50\u8A55\u4FA1\u304C\u5FC5\u8981"
-    });
+  const children = /* @__PURE__ */ new Map();
+  const referencedBy = /* @__PURE__ */ new Map();
+  for (const owner of views) {
+    const ids = owner.ir.nodes.filter((node) => node.kind === "task" && node.subtype === "sub").map((node) => node.id);
+    children.set(owner.id, ids);
+    for (const id of ids) {
+      if (!byView.has(id)) {
+        findings.push({ level: "error", code: "E-502", message: `${owner.id}:${id} \u306E task(sub) \u306B\u5BFE\u5FDC\u3059\u308B\u5B50 .flow \u304C\u306A\u3044` });
+        continue;
+      }
+      const owners = referencedBy.get(id) ?? /* @__PURE__ */ new Set();
+      owners.add(owner.id);
+      referencedBy.set(id, owners);
+    }
   }
-  if (options.parentId) {
-    const parent = byView.get(options.parentId);
+  if (views.length > 1 && !options.parentId) {
+    findings.push({ level: "error", code: "E-501", message: "\u8907\u6570\u30D3\u30E5\u30FC\u306E\u7D0D\u54C1\u306B\u306F --parent \u3067\u6982\u8981\u56F3\u3092\u6307\u5B9A\u3059\u308B" });
+  }
+  const parentId = options.parentId ?? (views.length === 1 ? views[0].id : void 0);
+  if (parentId) {
+    const parent = byView.get(parentId);
     if (!parent) {
-      findings.push({ level: "error", code: "E-501", message: `\u89AA\u30D3\u30E5\u30FC ${options.parentId} \u304C\u5B58\u5728\u3057\u306A\u3044` });
+      findings.push({ level: "error", code: "E-501", message: `\u89AA\u30D3\u30E5\u30FC ${parentId} \u304C\u5B58\u5728\u3057\u306A\u3044` });
     } else {
-      const referencedBy = /* @__PURE__ */ new Map();
-      for (const owner of views) {
-        for (const node of owner.ir.nodes.filter((candidate) => candidate.kind === "task" && candidate.subtype === "sub")) {
-          if (!byView.has(node.id)) {
-            findings.push({
-              level: "error",
-              code: "E-502",
-              message: `${owner.id}:${node.id} \u306E task(sub) \u306B\u5BFE\u5FDC\u3059\u308B\u5B50 .flow \u304C\u306A\u3044`
-            });
-            continue;
-          }
-          const owners = referencedBy.get(node.id) ?? /* @__PURE__ */ new Set();
-          owners.add(owner.id);
-          referencedBy.set(node.id, owners);
+      const reachable = /* @__PURE__ */ new Set();
+      const active = /* @__PURE__ */ new Set();
+      const visit = (id) => {
+        if (active.has(id)) {
+          findings.push({ level: "error", code: "E-501", message: `${id}: task(sub) \u306E\u8A73\u7D30\u53C2\u7167\u304C\u5FAA\u74B0\u3057\u3066\u3044\u308B` });
+          return;
         }
+        if (reachable.has(id) || !byView.has(id)) return;
+        reachable.add(id);
+        active.add(id);
+        for (const child of children.get(id) ?? []) visit(child);
+        active.delete(id);
+      };
+      visit(parent.id);
+      for (const row of rows.filter((row2) => row2.claim === "independent-trigger" && row2.kind === "view" && row2.status === "modeled")) {
+        const ref = splitViewRef(row.viewId);
+        if (ref?.target === "*") visit(ref.view);
       }
       for (const child of views.filter((view) => view.id !== parent.id)) {
         let plan;
@@ -7488,6 +7656,8 @@ function evaluateDelivery(options) {
             code: "E-501",
             message: `${child.id}: \u3069\u306E\u30D3\u30E5\u30FC\u306B\u3082\u540C\u3058 ID \u306E task(sub) \u304C\u306A\u304F\u3001independent-trigger \u884C\u3082\u306A\u3044`
           });
+        } else if (!reachable.has(child.id)) {
+          findings.push({ level: "error", code: "E-501", message: `${child.id}: \u6982\u8981\u56F3 ${parent.id} \u307E\u305F\u306F\u72EC\u7ACB\u30C8\u30EA\u30AC\u30FC\u304B\u3089\u5230\u9054\u3067\u304D\u306A\u3044\u5B50\u30D3\u30E5\u30FC` });
         }
       }
       const parentPoolLabels = new Set(parent.ir.pools.flatMap((pool) => [pool.id, pool.label]));
@@ -7502,6 +7672,63 @@ function evaluateDelivery(options) {
             message: `${child.id} \u3067\u5916\u90E8\u30D7\u30FC\u30EB\u306E ${pool.id}\u300C${pool.label}\u300D\u304C\u89AA\u3067\u306F\u30EC\u30FC\u30F3\u306B\u306A\u3063\u3066\u3044\u308B`
           });
         }
+      }
+    }
+  }
+  if (options.consulting) {
+    const evidenceKinds = /* @__PURE__ */ new Set(["fact", "assume", "conflict", "proposal"]);
+    for (const view of views) {
+      const evidence = rows.filter((row) => evidenceKinds.has(row.kind) && row.viewId.startsWith(`${view.id}:`) && (row.status === "modeled" || row.status === "?"));
+      if (evidence.length === 0) findings.push({ level: "error", code: "E-518", message: `${view.id}: \u696D\u52D9\u306E\u6839\u62E0\u884C\u304C\u306A\u3044\u3002\u30D3\u30E5\u30FC\u7BA1\u7406\u884C\u3060\u3051\u3067\u306F\u691C\u8A3C\u3067\u304D\u306A\u3044` });
+      for (const node of view.ir.nodes) {
+        const branches = view.ir.edges.filter((edge) => edge.kind === "seq" && edge.from === node.id);
+        if (branches.length < 2) continue;
+        for (const edge of branches) {
+          if (!evidence.some((row) => row.viewId === `${view.id}:${edge.from}->${edge.to}`)) {
+            findings.push({ level: "error", code: "E-518", message: `${view.id}:${edge.from}->${edge.to}: \u5206\u5C90\u306E\u6839\u62E0\u884C\u304C\u306A\u3044` });
+          }
+        }
+      }
+      const reviews = rows.filter((row) => row.claim === "delivery-review" && row.kind === "view" && row.viewId === `${view.id}:*`);
+      const review = reviews[0];
+      if (reviews.length !== 1 || review?.status !== "modeled" || listValue(review.reason, "semantic")?.join() !== "pass" || listValue(review.reason, "visual")?.join() !== "pass" || listValue(review.reason, "svg-sha256")?.join() !== view.svgHash) {
+        findings.push({ level: "error", code: "E-519", message: `${view.id}: \u73FE\u5728\u306E SVG \u306B\u5BFE\u3059\u308B\u610F\u5473\u30FB\u76EE\u8996\u30EC\u30D3\u30E5\u30FC\u304C\u672A\u5B8C\u4E86\u3002delivery-review \u306B semantic=pass; visual=pass; svg-sha256=<\u78BA\u8A8D\u3057\u305FSVG\u306ESHA256> \u3092\u8A18\u9332\u3059\u308B` });
+      }
+    }
+    const reviewHeaders = ["child", "invariant", "parent claim", "child evidence", "verdict", "action"];
+    const lines = markdown.split(/\r?\n/u);
+    const reviewed = /* @__PURE__ */ new Map();
+    const tokens = (value) => value.split(/[\s;,]+/u).map((token) => token.replace(/^`|`$/gu, ""));
+    const cites = (value, view) => tokens(value).some((token) => {
+      const ref = splitViewRef(token);
+      return ref?.view === view.id && (ref.target === "*" || view.ir.nodes.some((n) => n.id === ref.target) || view.ir.edges.some((e) => `${e.from}->${e.to}` === ref.target));
+    });
+    for (let i = 0; i + 1 < lines.length; i++) {
+      if (cells(lines[i]).map((cell) => cell.toLowerCase()).join("|") !== reviewHeaders.join("|") || !separator(lines[i + 1], 6)) continue;
+      i += 2;
+      for (; i < lines.length && lines[i].trim().startsWith("|"); i++) {
+        const parts = cells(lines[i]);
+        const [childId, invariant, parentClaim, childEvidence, verdict] = parts;
+        const child = byView.get(childId ?? "");
+        const owners = views.filter((view) => (children.get(view.id) ?? []).includes(childId ?? "") && cites(parentClaim ?? "", view));
+        const hasSource = tokens(childEvidence ?? "").some((token) => /^[a-z][a-z0-9-]*:.+/u.test(token) && !byView.has(token.split(":")[0]) && !/^(generated|compiler|analysis):/u.test(token));
+        if (parts.length !== 6 || parts.some((cell) => !cell) || !child || owners.length !== 1 || !SEMANTIC_INVARIANTS.includes(invariant ?? "") || !cites(childEvidence ?? "", child) || !hasSource || verdict !== "supported") {
+          findings.push({ level: "error", code: "E-518", message: `\u610F\u5473\u30EC\u30D3\u30E5\u30FC ${i + 1} \u884C\u76EE\u304C\u672A\u5B8C\u4E86\u307E\u305F\u306F\u53C2\u7167\u4E0D\u6B63\u3002\u89AA\u30FB\u5B50\u306E view:id\u3001\u539F\u8CC7\u6599\u306E\u51FA\u5178\u3001supported \u5224\u5B9A\u3068 action \u304C\u5FC5\u8981` });
+          continue;
+        }
+        const key2 = `${owners[0].id}\0${childId}\0${invariant}`;
+        reviewed.set(key2, (reviewed.get(key2) ?? 0) + 1);
+      }
+      i--;
+    }
+    for (const [owner, ids] of children) for (const child of ids) {
+      if (!byView.has(child)) continue;
+      for (const invariant of SEMANTIC_INVARIANTS) {
+        if (reviewed.get(`${owner}\0${child}\0${invariant}`) !== 1) findings.push({
+          level: "error",
+          code: "E-518",
+          message: `${owner} \u2192 ${child}: ${invariant} \u306E supported \u30EC\u30D3\u30E5\u30FC\u304C1\u884C\u5FC5\u8981`
+        });
       }
     }
   }
@@ -7577,11 +7804,27 @@ var strict = args.includes("--strict");
 var emitNormalized = args.includes("--emit-normalized");
 var verticalDefault = args.includes("--vertical");
 if (!input) {
-  print(process.stderr, "usage: process-model-generator <input.flow> [-o out.svg] [--strict] [--vertical] [--emit-normalized] | process-model-generator eval --dir <dir> --report <review.md> [--parent <flow-id>] [--consulting] | --version");
+  print(process.stderr, "usage: process-model-generator <input.flow|input.bpmn> [-o out.svg] [--strict] [--vertical] [--emit-normalized] | process-model-generator eval --dir <dir> --report <review.md> [--parent <flow-id>] [--consulting] | --version");
   process.exit(2);
 }
 try {
-  const source = readFileSync2(input, "utf8");
+  if (input.endsWith(".bpmn")) {
+    const directory = mkdtempSync(tmpdir() + "/bpmn-detail-");
+    try {
+      execFileSync("python3", [fileURLToPath(new URL("./bpmn-detail.py", import.meta.url)), input, directory, input]);
+      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.20");
+      if (output) {
+        mkdirSync(dirname(output), { recursive: true });
+        writeFileSync(output, result2.svg);
+      } else print(process.stdout, result2.svg);
+      if (emitNormalized) print(process.stderr, readFileSync3(directory + "/detail.json", "utf8"));
+      print(process.stderr, `wrote complete detailed sheet (${result2.width}x${result2.height})`);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+    process.exit(0);
+  }
+  const source = readFileSync3(input, "utf8");
   const result = compile(source, {
     strict,
     orientation: verticalDefault ? "vertical" : void 0,

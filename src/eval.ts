@@ -3,6 +3,7 @@
 // 機械的な契約だけを照合する。面談固有の claims は上位の評価フィクスチャが担う。
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { compile, CompileError } from './compile.ts';
 import { parse } from './parse.ts';
@@ -45,6 +46,7 @@ interface View {
   file: string;
   ir: Ir;
   diagnostics: Diagnostic[];
+  svgHash: string;
 }
 
 const HEADERS = ['claim', 'kind', 'view:id', 'status', 'reason'];
@@ -54,6 +56,7 @@ const CONSULTING_KINDS = new Set([
   'fact', 'assume', 'conflict', 'unknown-topology', 'unknown-label', 'proposal', 'view', 'diagnostic',
 ]);
 const VIEW_BOUNDARIES = new Set(['outcome', 'handoff', 'subprocess', 'trigger', 'time', 'variant']);
+const SEMANTIC_INVARIANTS = ['scope/trigger', 'participant/lane', 'entry/precondition', 'exit/continuation', 'exception/return/time', 'artifact/system/control'];
 
 function cells(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/u, '').replace(/\|$/u, '');
@@ -118,7 +121,7 @@ export function parseLedger(markdown: string, consulting = false): { rows: Ledge
     }
     if (consulting) {
       const locators = source!.split(';').map((value) => value.trim()).filter(Boolean);
-      if (locators.some((value) => !/^[a-z][a-z0-9-]*:.+/u.test(value)) ||
+      if (locators.length === 0 || locators.some((value) => !/^[a-z][a-z0-9-]*:.+/u.test(value)) ||
           (kind === 'conflict' && locators.length < 2)) {
         findings.push({
           level: 'error', code: 'E-515',
@@ -220,7 +223,7 @@ export function evaluateDelivery(options: DeliveryEvalOptions): DeliveryEvalResu
       const svgPath = join(options.directory, `${basename(name, '.flow')}.svg`);
       const delivered = existsSync(svgPath) ? readFileSync(svgPath, 'utf8') : undefined;
       const result = compile(source, { strict: true, version: options.version });
-      views.push({ id, file: name, ir: parsed.ir, diagnostics: result.diagnostics });
+      views.push({ id, file: name, ir: parsed.ir, diagnostics: result.diagnostics, svgHash: createHash('sha256').update(result.svg).digest('hex') });
       if (delivered === undefined) {
         findings.push({ level: 'error', code: 'E-500', message: `${name}: 対応する SVG がない` });
       } else if (delivered !== result.svg) {
@@ -329,33 +332,47 @@ export function evaluateDelivery(options: DeliveryEvalOptions): DeliveryEvalResu
     }
   }
 
-  const oversized = views.some((view) => view.diagnostics.some((diagnostic) => diagnostic.code === 'W-440'));
-  if (oversized && (flowFiles.length < 2 || !options.parentId)) {
-    findings.push({
-      level: 'error', code: 'E-517',
-      message: 'W-440 を含む成果物は、複数 .flow と --parent による親子評価が必要',
-    });
+  const children = new Map<string, string[]>();
+  const referencedBy = new Map<string, Set<string>>();
+  for (const owner of views) {
+    const ids = owner.ir.nodes.filter(node => node.kind === 'task' && node.subtype === 'sub').map(node => node.id);
+    children.set(owner.id, ids);
+    for (const id of ids) {
+      if (!byView.has(id)) {
+        findings.push({ level: 'error', code: 'E-502', message: `${owner.id}:${id} の task(sub) に対応する子 .flow がない` });
+        continue;
+      }
+      const owners = referencedBy.get(id) ?? new Set<string>();
+      owners.add(owner.id);
+      referencedBy.set(id, owners);
+    }
   }
-
-  if (options.parentId) {
-    const parent = byView.get(options.parentId);
+  if (views.length > 1 && !options.parentId) {
+    findings.push({ level: 'error', code: 'E-501', message: '複数ビューの納品には --parent で概要図を指定する' });
+  }
+  const parentId = options.parentId ?? (views.length === 1 ? views[0]!.id : undefined);
+  if (parentId) {
+    const parent = byView.get(parentId);
     if (!parent) {
-      findings.push({ level: 'error', code: 'E-501', message: `親ビュー ${options.parentId} が存在しない` });
+      findings.push({ level: 'error', code: 'E-501', message: `親ビュー ${parentId} が存在しない` });
     } else {
-      const referencedBy = new Map<string, Set<string>>();
-      for (const owner of views) {
-        for (const node of owner.ir.nodes.filter((candidate) => candidate.kind === 'task' && candidate.subtype === 'sub')) {
-          if (!byView.has(node.id)) {
-            findings.push({
-              level: 'error', code: 'E-502',
-              message: `${owner.id}:${node.id} の task(sub) に対応する子 .flow がない`,
-            });
-            continue;
-          }
-          const owners = referencedBy.get(node.id) ?? new Set<string>();
-          owners.add(owner.id);
-          referencedBy.set(node.id, owners);
+      const reachable = new Set<string>();
+      const active = new Set<string>();
+      const visit = (id: string): void => {
+        if (active.has(id)) {
+          findings.push({ level: 'error', code: 'E-501', message: `${id}: task(sub) の詳細参照が循環している` });
+          return;
         }
+        if (reachable.has(id) || !byView.has(id)) return;
+        reachable.add(id);
+        active.add(id);
+        for (const child of children.get(id) ?? []) visit(child);
+        active.delete(id);
+      };
+      visit(parent.id);
+      for (const row of rows.filter(row => row.claim === 'independent-trigger' && row.kind === 'view' && row.status === 'modeled')) {
+        const ref = splitViewRef(row.viewId);
+        if (ref?.target === '*') visit(ref.view);
       }
       for (const child of views.filter((view) => view.id !== parent.id)) {
         let plan: LedgerRow | undefined;
@@ -395,6 +412,8 @@ export function evaluateDelivery(options: DeliveryEvalOptions): DeliveryEvalResu
             level: 'error', code: 'E-501',
             message: `${child.id}: どのビューにも同じ ID の task(sub) がなく、independent-trigger 行もない`,
           });
+        } else if (!reachable.has(child.id)) {
+          findings.push({ level: 'error', code: 'E-501', message: `${child.id}: 概要図 ${parent.id} または独立トリガーから到達できない子ビュー` });
         }
       }
       const parentPoolLabels = new Set(parent.ir.pools.flatMap((pool) => [pool.id, pool.label]));
@@ -408,6 +427,68 @@ export function evaluateDelivery(options: DeliveryEvalOptions): DeliveryEvalResu
             message: `${child.id} で外部プールの ${pool.id}「${pool.label}」が親ではレーンになっている`,
           });
         }
+      }
+    }
+  }
+
+  if (options.consulting) {
+    const evidenceKinds = new Set(['fact', 'assume', 'conflict', 'proposal']);
+    for (const view of views) {
+      const evidence = rows.filter(row => evidenceKinds.has(row.kind) && row.viewId.startsWith(`${view.id}:`) && (row.status === 'modeled' || row.status === '?'));
+      if (evidence.length === 0) findings.push({ level: 'error', code: 'E-518', message: `${view.id}: 業務の根拠行がない。ビュー管理行だけでは検証できない` });
+      for (const node of view.ir.nodes) {
+        const branches = view.ir.edges.filter(edge => edge.kind === 'seq' && edge.from === node.id);
+        if (branches.length < 2) continue;
+        for (const edge of branches) {
+          if (!evidence.some(row => row.viewId === `${view.id}:${edge.from}->${edge.to}`)) {
+            findings.push({ level: 'error', code: 'E-518', message: `${view.id}:${edge.from}->${edge.to}: 分岐の根拠行がない` });
+          }
+        }
+      }
+      const reviews = rows.filter(row => row.claim === 'delivery-review' && row.kind === 'view' && row.viewId === `${view.id}:*`);
+      const review = reviews[0];
+      if (reviews.length !== 1 || review?.status !== 'modeled' ||
+          listValue(review.reason, 'semantic')?.join() !== 'pass' ||
+          listValue(review.reason, 'visual')?.join() !== 'pass' ||
+          listValue(review.reason, 'svg-sha256')?.join() !== view.svgHash) {
+        findings.push({ level: 'error', code: 'E-519', message: `${view.id}: 現在の SVG に対する意味・目視レビューが未完了。delivery-review に semantic=pass; visual=pass; svg-sha256=<確認したSVGのSHA256> を記録する` });
+      }
+    }
+
+    // 意味そのものは推測しない。既存の6項目表の欠落・不合格・参照切れを閉じる。
+    const reviewHeaders = ['child', 'invariant', 'parent claim', 'child evidence', 'verdict', 'action'];
+    const lines = markdown.split(/\r?\n/u);
+    const reviewed = new Map<string, number>();
+    const tokens = (value: string) => value.split(/[\s;,]+/u).map(token => token.replace(/^`|`$/gu, ''));
+    const cites = (value: string, view: View): boolean => tokens(value).some(token => {
+      const ref = splitViewRef(token);
+      return ref?.view === view.id && (ref.target === '*' || view.ir.nodes.some(n => n.id === ref.target) || view.ir.edges.some(e => `${e.from}->${e.to}` === ref.target));
+    });
+    for (let i = 0; i + 1 < lines.length; i++) {
+      if (cells(lines[i]!).map(cell => cell.toLowerCase()).join('|') !== reviewHeaders.join('|') || !separator(lines[i + 1]!, 6)) continue;
+      i += 2;
+      for (; i < lines.length && lines[i]!.trim().startsWith('|'); i++) {
+        const parts = cells(lines[i]!);
+        const [childId, invariant, parentClaim, childEvidence, verdict] = parts;
+        const child = byView.get(childId ?? '');
+        const owners = views.filter(view => (children.get(view.id) ?? []).includes(childId ?? '') && cites(parentClaim ?? '', view));
+        const hasSource = tokens(childEvidence ?? '').some(token => /^[a-z][a-z0-9-]*:.+/u.test(token) && !byView.has(token.split(':')[0]!) && !/^(generated|compiler|analysis):/u.test(token));
+        if (parts.length !== 6 || parts.some(cell => !cell) || !child || owners.length !== 1 ||
+            !SEMANTIC_INVARIANTS.includes(invariant ?? '') || !cites(childEvidence ?? '', child) || !hasSource || verdict !== 'supported') {
+          findings.push({ level: 'error', code: 'E-518', message: `意味レビュー ${i + 1} 行目が未完了または参照不正。親・子の view:id、原資料の出典、supported 判定と action が必要` });
+          continue;
+        }
+        const key = `${owners[0]!.id}\u0000${childId}\u0000${invariant}`;
+        reviewed.set(key, (reviewed.get(key) ?? 0) + 1);
+      }
+      i--;
+    }
+    for (const [owner, ids] of children) for (const child of ids) {
+      if (!byView.has(child)) continue;
+      for (const invariant of SEMANTIC_INVARIANTS) {
+        if (reviewed.get(`${owner}\u0000${child}\u0000${invariant}`) !== 1) findings.push({
+          level: 'error', code: 'E-518', message: `${owner} → ${child}: ${invariant} の supported レビューが1行必要`,
+        });
       }
     }
   }

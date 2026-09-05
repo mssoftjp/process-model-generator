@@ -1,0 +1,17 @@
+# 説明用の仮定例。送付までが対象。Supplier 内部と受領確認は不明。
+flow invoice_send[Invoice 作成から Supplier への送付]
+pool company[Company]
+lane Accounting
+  start begin
+  task write[Write invoice]
+  doc invoice[Invoice]
+  task(send) send[Send invoice to supplier]
+  end sent[送付完了]
+pool supplier[Supplier]
+
+begin -> write
+write -> send
+send -> sent
+write -.-> invoice
+invoice -.-> send
+send ~> supplier: Invoice

@@ -1,0 +1,223 @@
+[
+  {
+    "id": "monthly",
+    "file": "scenarios/monthly.flow",
+    "source": "https://camunda.com/bpmn/examples/#monthly-invoicing",
+    "expected": "supported",
+    "nodes": [
+      {
+        "id": "month",
+        "kind": "start",
+        "subtype": "timer"
+      },
+      {
+        "id": "request",
+        "kind": "start",
+        "subtype": "message"
+      }
+    ],
+    "differentPools": [
+      [
+        "month",
+        "request"
+      ]
+    ],
+    "mutations": [
+      {
+        "old": "pool billing[Monthly billing]",
+        "new": "pool advice[Advice service]",
+        "reason": "independent triggers merged into one pool"
+      }
+    ],
+    "sha256": "d6fcec2a54f91ca76d2e67b2e572260b56c67425be24fbe53147326bd2167129"
+  },
+  {
+    "id": "approvals",
+    "file": "scenarios/approvals.flow",
+    "source": "https://camunda.com/bpmn/examples/#four-eyes-principle",
+    "expected": "supported",
+    "nodes": [
+      {
+        "id": "join",
+        "kind": "and"
+      },
+      {
+        "id": "split",
+        "kind": "and"
+      }
+    ],
+    "edges": [
+      [
+        "seq",
+        "approve1",
+        "join"
+      ],
+      [
+        "seq",
+        "approve2",
+        "join"
+      ]
+    ],
+    "mutations": [
+      {
+        "old": "and join",
+        "new": "xor join",
+        "reason": "one approval can bypass synchronization"
+      }
+    ],
+    "sha256": "14bcb67e5f6139258140e44e6e1e9c3599209c9195d1e3a4b8458dc96d691a49"
+  },
+  {
+    "id": "invoice",
+    "file": "scenarios/invoice.flow",
+    "source": "user:2026-09-05/write-then-send",
+    "expected": "supported",
+    "nodes": [
+      {
+        "id": "invoice",
+        "kind": "doc",
+        "lane": "Accounting"
+      },
+      {
+        "id": "send",
+        "kind": "task",
+        "subtype": "send"
+      }
+    ],
+    "edges": [
+      [
+        "assoc",
+        "write",
+        "invoice"
+      ],
+      [
+        "assoc",
+        "invoice",
+        "send"
+      ],
+      [
+        "msg",
+        "send",
+        "supplier"
+      ]
+    ],
+    "mutations": [
+      {
+        "old": "invoice -.-> send",
+        "new": "send -.-> invoice",
+        "reason": "input document becomes send output"
+      }
+    ],
+    "sha256": "e4e8c59da200d71fb71c8406ac37533bb65a46779f81033a259db70c3cd953ed"
+  },
+  {
+    "id": "starter",
+    "file": "upstream/starter.bpmn",
+    "source": "https://github.com/bpmn-io/bpmn-js-examples/blob/8be0b2b279531332346f29c0b5e0b219c54cda0b/starter/diagram.bpmn",
+    "expected": "supported",
+    "unsupportedTags": [],
+    "sha256": "985c2c317af60a00b83d62fd218b63e2949b293d612b32c50937cd1304f1aba2",
+    "nodes": [
+      {
+        "id": "n2",
+        "kind": "task",
+        "label": "Scan QR code"
+      },
+      {
+        "id": "n3",
+        "kind": "xor",
+        "label": "Scan successful?"
+      }
+    ],
+    "edges": [
+      [
+        "seq",
+        "n3",
+        "n1"
+      ],
+      [
+        "seq",
+        "n3",
+        "n4"
+      ],
+      [
+        "seq",
+        "n2",
+        "n3"
+      ]
+    ]
+  },
+  {
+    "id": "pizza",
+    "file": "upstream/pizza.bpmn",
+    "source": "https://github.com/bpmn-io/bpmn-js-examples/blob/8be0b2b279531332346f29c0b5e0b219c54cda0b/bundling/resources/pizza-collaboration.bpmn",
+    "expected": "supported",
+    "unsupportedTags": [],
+    "sha256": "0f2dde4a3698328d1f0be91fd40d2db1c6f18397f56909171a636d1991b4dd2b",
+    "nodes": [
+      {
+        "id": "n3",
+        "kind": "xor",
+        "subtype": "event"
+      },
+      {
+        "id": "n4",
+        "kind": "mid",
+        "subtype": "timer"
+      },
+      {
+        "id": "n11",
+        "kind": "and"
+      },
+      {
+        "id": "n17",
+        "kind": "end",
+        "subtype": "terminate"
+      }
+    ],
+    "edges": [
+      [
+        "seq",
+        "n11",
+        "n12"
+      ],
+      [
+        "seq",
+        "n13",
+        "n12"
+      ],
+      [
+        "seq",
+        "n11",
+        "n14"
+      ],
+      [
+        "msg",
+        "n2",
+        "n10"
+      ]
+    ]
+  },
+  {
+    "id": "extensions",
+    "file": "upstream/extensions.bpmn",
+    "source": "https://github.com/bpmn-io/bpmn-js-examples/blob/8be0b2b279531332346f29c0b5e0b219c54cda0b/custom-meta-model/resources/sample.bpmn",
+    "expected": "partial",
+    "unsupportedTags": [
+      "extensionElements",
+      "extensionAttribute"
+    ],
+    "sha256": "30d9d73bc40ae81d9ab313c6be64fadafecdf316cfa470005ea38a9dace849fe"
+  },
+  {
+    "id": "nested",
+    "file": "upstream/nested.bpmn",
+    "source": "https://github.com/bpmn-io/bpmn-js-examples/blob/8be0b2b279531332346f29c0b5e0b219c54cda0b/deep-linking/resources/nested-subprocesses.bpmn",
+    "expected": "partial",
+    "unsupportedTags": [
+      "subProcess",
+      "startEvent"
+    ],
+    "sha256": "f8da2495717c87f46cd46972e72007cad023cd61411ce08e9287fccf6008ccf1"
+  }
+]

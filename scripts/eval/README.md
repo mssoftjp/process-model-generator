@@ -21,3 +21,30 @@ npx tsx scripts/eval/fuzz.mts 2000
 ```
 
 The corpus itself (`inputs/`) is local and not tracked; `corpus.txt` is a plain list of `.flow` paths.
+
+## Semantic and external-source benchmark
+
+Run `npm run eval:benchmark` for the source-pinned contract corpus in
+`test/fixtures/benchmark/manifest.json`. It produces `outputs/benchmark/results.json`
+and a native-size scrollable `index.html` with both orientations, diagnostics,
+source links, partial conversion details and mutation checks. It runs offline;
+refresh upstream inputs deliberately with a new pinned revision and hashes.
+
+```bash
+npm run eval:benchmark -- outputs/benchmark --reviews test/fixtures/benchmark/visual-review.json --require-ready
+```
+
+This stronger gate includes current visual observations and rejects missing/stale
+reviews, failed readability and incomplete source coverage. The detailed-sheet compiler retains nested scopes and extension metadata in a single SVG; a single-scope partial conversion can pass delivery only when the complete sheet covers the omitted content and its sequence connections. Passing regression tests must not replace actual visual inspection. `npm test` exercises the benchmark contract.
+
+Use the layers in order: source provenance and scope; semantic assertions and
+wrong-model mutations; conversion loss disclosure; strict rendering in both
+orientations; actual readability review. Do not combine them into a weighted score.
+See the fixture README for the source coverage matrix and explicit uncovered topics.
+The existing delivery `eval` remains responsible for evidence ledgers and parent/child
+business models; this benchmark tests the implementation itself.
+
+`snapshot.mts` now uses strict compilation and returns nonzero for any failed figure
+or an empty corpus. Its totals only describe successfully compiled figures: inspect
+`failed` and the error rows before comparing totals. These geometry metrics are
+supporting evidence, never a replacement for the benchmark or visual review.

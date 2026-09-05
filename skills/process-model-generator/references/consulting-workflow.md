@@ -12,10 +12,22 @@ Use these as ownership states, not a one-way waterfall:
 2. **Elicit and confirm** — extract evidence, contradictions, assumptions, and unknowns. Confirm that the source was understood rather than merely copied.
 3. **Architecture** — choose overview/detail boundaries and decide which variants share a model.
 4. **Synthesize** — write each supported unit in `.flow` with stable parent/child IDs.
-5. **Verify and render** — compile with `--strict`, evaluate the bundle, and inspect the SVG.
+5. **Verify and render** — compile with `--strict`, inspect the SVG, record the review, and evaluate the bundle.
 6. **Validate and revise** — ask whether the model represents the intended business reality and route corrections back to their owning state.
 
 Verification asks whether the artifacts satisfy the declared contract. Validation asks whether the contract and model serve the business need. A technically valid diagram can still fail validation. Verify does not infer meaning across views. Before a multi-view delivery is complete, perform the AI-owned cross-view semantic review in the audit patterns.
+
+## Completion evidence
+
+Every view needs source-bearing business evidence, not just view-index and diagnostic rows. Every diverging sequence branch needs its own evidence row addressed to `view:from->to`. Perform the semantic reconciliation and inspect the actual regenerated SVG before adding a `delivery-review` row to the existing ledger:
+
+```markdown
+| delivery-review | view | review:reviewer-and-artifact | payment:* | modeled | semantic=pass; visual=pass; svg-sha256=<64-digit SHA256 of the inspected SVG>; observations=<what was checked> |
+```
+
+Record concrete observations about responsibility, branch labels, line continuity, and overview/detail readability. Compute the SVG hash with `shasum -a 256 payment.svg` or an equivalent SHA256 tool. Never fill in a passing review merely from compiler metrics. If the model or SVG changes, inspect the new output before updating the record. Missing, failed, or stale review records fail `eval --consulting` with `E-519`; missing business evidence or cross-view review fails with `E-518`.
+
+A passing scoped review can retain explicitly excluded or safely isolated unknowns. It does not resolve them or authorize an end-to-end claim. Report the supported boundary and remaining unknowns alongside the result. Mechanical success means the recorded review contract is satisfied; the reviewer remains responsible for the judgments.
 
 ## Evidence ledger
 
@@ -67,7 +79,7 @@ Before delivery, walk every outgoing branch of every diverging gateway, includin
 
 ## Architecture and decomposition
 
-Create an overview when it helps stakeholders share the same end-to-end story. Add a detail view only for a supported boundary such as:
+Default to one complete detailed SVG with native-size scrolling and zoom. Canvas size alone never requires decomposition. Create an additional overview when the user requests it. Add a detail view only for a supported boundary such as:
 
 - a distinct business outcome or lifecycle;
 - a material responsibility handoff;

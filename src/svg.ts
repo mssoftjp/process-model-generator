@@ -39,7 +39,7 @@ export function renderSvg(geo: Geometry, version = 'dev'): string {
   parts.push(`<rect width="${geo.width}" height="${geo.height}" fill="${C.bg}"/>`);
 
   if (geo.title) {
-    parts.push(text(geo.title, 24, 24 + 18, TITLE_FONT_SIZE, C.title, 'start', 600));
+    parts.push(text(geo.title, 24, 24 + 18, TITLE_FONT_SIZE, C.title, 'start', 600, true));
   }
 
   // プール帯とレーン帯。見出しは読み始めの側(横図=左、縦図=上)に置き、
@@ -88,13 +88,13 @@ export function renderSvg(geo: Geometry, version = 'dev'): string {
     if (dupLaneLabel.has(lane.label)) return out.join('\n');
     if (vertical) {
       out.push(
-        `<text x="${ix + iw / 2}" y="${iy + laneHeaderT / 2}" font-size="12" fill="${C.subText}" text-anchor="middle" dominant-baseline="central">${esc(lane.label)}</text>`,
+        `<text x="${ix + iw / 2}" y="${iy + laneHeaderT / 2}" font-size="12" textLength="${measureText(lane.label, 12).toFixed(1)}" lengthAdjust="spacingAndGlyphs" fill="${C.subText}" text-anchor="middle" dominant-baseline="central">${esc(lane.label)}</text>`,
       );
     } else {
       const lx = ix + laneHeaderT / 2;
       const ly = lane.y + lane.h / 2;
       out.push(
-        `<text x="${lx}" y="${ly}" font-size="12" fill="${C.subText}" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(lane.label)}</text>`,
+        `<text x="${lx}" y="${ly}" font-size="12" textLength="${measureText(lane.label, 12).toFixed(1)}" lengthAdjust="spacingAndGlyphs" fill="${C.subText}" text-anchor="middle" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(lane.label)}</text>`,
       );
     }
     return out.join('\n');
@@ -145,8 +145,9 @@ export function renderSvg(geo: Geometry, version = 'dev'): string {
   parts.push(layer('layer-band', band));
 
   // 辺レイヤ(ノードより下層)とノードレイヤ
+  const emphasizedNodes = new Set(geo.edges.filter(e => e.mainHint).flatMap(e => [e.from, e.to]));
   parts.push(layer('layer-edges', geo.edges.map((e) => group(gid('edge', e.id), renderEdge(e)))));
-  parts.push(layer('layer-nodes', geo.nodes.map((n) => group(gid('node', n.id), renderNode(n)))));
+  parts.push(layer('layer-nodes', geo.nodes.map((n) => group(gid('node', n.id), renderNode(n, emphasizedNodes.has(n.id))))));
 
   parts.push('</svg>');
   return parts.join('\n');
@@ -185,9 +186,9 @@ function idAllocator(): (prefix: string, raw: string) => string {
 
 // ---- ノード ----
 
-function renderNode(n: NodeGeom): string {
-  const stroke = n.provisional ? C.provisional : n.onSpine ? C.nodeSpine : C.node;
-  const sw = n.onSpine ? 1.6 : 1.25;
+function renderNode(n: NodeGeom, emphasized: boolean): string {
+  const stroke = n.provisional ? C.provisional : emphasized ? C.nodeSpine : C.node;
+  const sw = emphasized ? 1.6 : 1.25;
   const out: string[] = [];
 
   if (n.kind === 'task') {
@@ -366,10 +367,10 @@ function renderEdge(e: EdgeGeom): string {
   const both = isAssoc && assocKind === 'both';
   const stroke = e.provisional
     ? C.provisional
-    : e.onSpine
+    : e.mainHint
       ? C.edgeSpine
-      : C.edge;
-  const sw = e.onSpine ? 2 : isAssoc ? 1.2 : 1.3;
+      : isMsg ? '#236e91' : C.edge;
+  const sw = e.mainHint ? 2 : isAssoc ? 1.2 : isMsg ? 1.6 : 1.3;
   const dash = e.provisional
     ? ' stroke-dasharray="5 3"'
     : isAssoc
@@ -390,7 +391,7 @@ function renderEdge(e: EdgeGeom): string {
   const assocAttr = isAssoc ? ` data-assoc="${assocKind}"` : '';
   const defaultAttr = e.isDefault ? ' data-edge-default="true"' : '';
   const condAttr = e.isConditional ? ' data-edge-conditional="true"' : '';
-  const mainAttr = e.mainHint || e.onSpine ? ' data-main-path="true"' : '';
+  const mainAttr = e.mainHint ? ' data-main-path="true"' : '';
   const returnAttr = e.returnHint ? ' data-return-hint="true"' : '';
   out.push(`<path d="${pathWithHops(linePts, e.hops)}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}${assocAttr}${defaultAttr}${condAttr}${mainAttr}${returnAttr}/>`);
   const bx = last.x - dx * ARROW_L;

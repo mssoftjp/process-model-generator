@@ -29,13 +29,14 @@ const { recoverSelectedRoute, diagnoseCrossingCauses } = await import(join(srcRo
 mkdirSync(outDir, { recursive: true });
 
 const rows: Record<string, unknown>[] = [];
+let failed = 0;
 const total = { edges: 0, bends: 0, hops: 0, oracle: 0, length: 0, area: 0, uturn: 0, excess: 0, patterns: {} as Record<string, number> };
 for (const f of files) {
   let src = readFileSync(f, 'utf8');
   if (vertical) src = 'orientation vertical\n' + src.split('\n').filter((l) => !/^\s*orientation\b/.test(l)).join('\n');
   const name = basename(f, '.flow');
   let r;
-  try { r = compile(src); } catch (e) { rows.push({ name, error: String(e).slice(0, 200) }); continue; }
+  try { r = compile(src, { strict: true }); } catch (e) { failed++; rows.push({ name, error: String(e) }); continue; }
   writeFileSync(join(outDir, `${name}.svg`), r.svg);
   const plan = recoverSelectedRoute(r);
   const planById = new Map(plan.plans.map((p: { edgeId: string }) => [p.edgeId, p]));
@@ -52,5 +53,6 @@ for (const f of files) {
   total.length += row.length; total.area += row.area; total.uturn += row.uturn; total.excess += row.excess;
   for (const [k, v] of Object.entries(patterns)) total.patterns[k] = (total.patterns[k] ?? 0) + v;
 }
-writeFileSync(join(outDir, 'metrics.json'), JSON.stringify({ vertical, srcRoot, total, rows }, null, 2));
+writeFileSync(join(outDir, 'metrics.json'), JSON.stringify({ vertical, srcRoot, failed, total, rows }, null, 2));
 console.log(JSON.stringify(total));
+if (failed || files.length === 0) process.exitCode = 1;

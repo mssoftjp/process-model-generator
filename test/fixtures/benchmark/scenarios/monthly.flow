@@ -1,0 +1,15 @@
+flow monthly[Independent advice and monthly invoicing]
+pool advice[Advice service]
+lane lawyer[Lawyer]
+start(message) request[Advice requested]
+task provide[Provide advice]
+end advised[Advice provided]
+pool billing[Monthly billing]
+lane accounting[Accounting]
+start(timer) month[Month ended]
+task bill[Create monthly invoice]
+end billed[Invoice created]
+request -> provide
+provide -> advised
+month -> bill
+bill -> billed

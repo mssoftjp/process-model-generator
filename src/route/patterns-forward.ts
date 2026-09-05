@@ -67,6 +67,41 @@ function assocDropStraight({ ctx, e, u, v, gU, gV }: ForwardCase): EdgePlan | un
 }
 
 /**
+ * 同じ列の文書類へ落とす中心線が手前のノードで塞がる場合は、右隣の溝を
+ * 一度だけ回って右辺へ入る。対象行の上チャネルまで往復する必要はない。
+ */
+function assocSameColumnSide({ ctx, e, u, v, gU, gV }: ForwardCase): EdgePlan | undefined {
+  if (
+    e.kind !== 'assoc' || isDocLike(u.node.kind) || !isDocLike(v.node.kind) ||
+    u.col !== v.col || gU === gV
+  ) return undefined;
+  const outputs = ctx.g.edges.filter((o) => o.kind === 'assoc' && o.from === e.from);
+  if (!outputs.every((o) => {
+    const target = ctx.nodeById.get(o.to);
+    return target !== undefined && isDocLike(target.kind) && target.lane === u.lane &&
+      ctx.p.col.get(target.id) === u.col &&
+      !ctx.g.edges.some((peer) =>
+        peer.id !== o.id && (peer.from === target.id || peer.to === target.id)
+      );
+  })) return undefined;
+  const g1 = u.col + 1;
+  noteLabelNeed(ctx, e, g1);
+  noteStubRun(ctx, u.lane, u.row, fallbackOffset(e), u.col, gutterScale(g1), e);
+  noteRowRun(ctx, v.lane, v.row, v.col, gutterScale(g1), e);
+  const run = allocGutter(ctx, g1, 'exit', gU, gV);
+  const srcY = fallbackRightY(e, e.from);
+  return {
+    edgeId: e.id, fromSide: 'right', toSide: 'right', pattern: 'row-approach',
+    points: [
+      { x: portX(e.from, 'right'), y: srcY },
+      { x: gutterX(g1, 'exit', run), y: srcY },
+      { x: gutterX(g1, 'exit', run), y: portY(e.to, 'right') },
+      { x: portX(e.to, 'right'), y: portY(e.to, 'right') },
+    ],
+  };
+}
+
+/**
  * 直下の文書を上の工程が読む: top → bottom の一直線(帳票フローの型の鏡像)。
  * 2 点形はスロット分離を受けないので、工程の下面に他の非 seq の出入りが無いときだけ。
  */
@@ -577,7 +612,7 @@ function channelApproach({ ctx, e, u, v, gU, gV }: ForwardCase): EdgePlan {
 
 /** 試す順序。前にあるほど優先(可読性の高い形)。channelApproach は常に成立するので末尾の既定。 */
 const FORWARD_PATTERNS: readonly ForwardPattern[] = [
-  assocDropStraight, assocRiseStraight, assocIntoNonDoc, assocDropToDoc, assocRailBelow, assocRailCoWriter,
+  assocDropStraight, assocSameColumnSide, assocRiseStraight, assocIntoNonDoc, assocDropToDoc, assocRailBelow, assocRailCoWriter,
   assocRowThenColumn,
   messageIntoBoundary, messageAcrossPools, messageDownward, messageUpward, messageBottomStub, messageIntoTop,
   boundarySameRow, directSequence, directAssoc,

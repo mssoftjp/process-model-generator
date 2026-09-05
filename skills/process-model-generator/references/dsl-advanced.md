@@ -22,9 +22,11 @@ Read this reference only when the source requires constructs beyond the common s
 
 Use `scripts/bpmn2flow.py` rather than transcribing XML by eye. Keep the original source and provenance when reproducing a diagram.
 
-The converter preserves catch versus throw, boundary `attachedToRef` / `cancelActivity`, condition expressions, default flow as `->/`, Association direction, collapsed Event Sub-Process starts, and `callActivity.calledElement` resolution to Process versus typed Global Task when the target is present in the same file. Expanded Sub-Processes are not flattened.
+The converter preserves catch versus throw, boundary `attachedToRef` / `cancelActivity`, condition expressions, default flow as `->/`, Association direction, collapsed Event Sub-Process starts, and `callActivity.calledElement` resolution to Process versus typed Global Task when the target is present in the same file. Expanded Sub-Processes are not flattened. Internal nodes omitted from collapsed subprocesses, nonempty extension elements, and namespaced extension attributes are reported as unsupported; a drawable outer view does not prove full conversion fidelity.
 
 Use `--json-stats` to report unconvertible elements by kind, id, name, and reason. Element presence is not semantic coverage: never count an element as supported when conversion dropped its meaning.
+
+The converter emits a stable `flow id[title]` using the source collaboration or process ID. Unassigned artifacts stay in their source process, beside their associated writer or reader where that lane is unambiguous. Ambiguous responsibility is marked `?` and reported as `laneAssignment`; an element with no identifiable process is reported as unsupported rather than assigned to another participant.
 
 ## Diagnostics
 
@@ -34,13 +36,13 @@ Use `--json-stats` to report unconvertible elements by kind, id, name, and reaso
 - `W-220` / `W-221` report synthetic start/end events added because a pool declared none. They remain warnings under `--strict` for compatibility and require an author review before delivery.
 - `W-223` / `W-224` report an additional sequence source/sink in a pool that already has an explicit start/end. Under `--strict` they become `E-223` / `E-224`, because the isolated entry or unfinished exit otherwise looks like a complete process.
 - `W-225` reports sequence flow entering a Start Event or leaving an End Event. `--strict` promotes it to `E-225`.
+- `W-226` / `W-227` report nodes unreachable from a start or independent handler, or unable to reach an end or handler, including isolated cycles. Under `--strict` they become `E-226` / `E-227`. Boundary-event paths are reached through their attached activity; ordinary retry loops with an exit remain supported. A parallel sibling loop may instead be cancelled by a straight, independent branch reaching a Terminate End in the same pool. This recognition does not prove general token-level liveness through decisions or joins.
 - `W-234` reports a synthetic plain Start Event added before a node whose only incoming communication is a message. It asks the author to distinguish a `start(message)` from an in-process `catch(message)` or Receive Task, but remains a warning under `--strict`.
 - `W-105` reports a `doc` or `store` whose declaration lane contains none of its associated activities. It is an ownership-review heuristic, remains a warning under `--strict`, and never moves the artifact automatically. `W-107` reports a likely phase-suffixed duplicate of another role lane and likewise requires review rather than automatic movement.
 - `W-310`–`W-316` cover illegal event position, unknown subtype, activity-marker conflict, unknown gateway subtype, missing boundary host, expanded Sub-Process, and default-plus-conditional conflicts. `--strict` promotes them to `E-310`–`E-316`.
 - `W-432` reports a residual edge-label overlap with a node after deterministic label placement. `N-432` reports residual label intersections with another edge or label. These identify where visual inspection or additional corridor capacity is still required; do not hand-edit generated coordinates.
-- `W-440` reports that a 1600×900 presentation would make the generated SVG unsuitable as the only delivered view, including a time axis longer than two screens when fitting would shrink the text. Keep the complete `.flow`, but deliver an end-to-end overview and the necessary Level 2 diagrams.
-- `W-441` reports that the lane axis would become physically unreadable at that scale. Under `--strict` it becomes `E-441` and compilation stops before writing an SVG. The diagnostic is based on generated dimensions and orientation, never node count.
-- `O-*` diagnostics and `W-252` indicate engine failures rather than source-model ambiguity. If they appear while using an unchanged compiler, report them separately and do not hand-edit the SVG to hide them.
+- `W-440` and `W-441` warn that fitting the complete SVG to 1600×900 shrinks text too far. Preserve one detailed SVG with native-size scrolling and zoom. These dimensions do not force decomposition or stop strict compilation.
+- `O-*` diagnostics and `W-252` indicate engine failures rather than source-model ambiguity. Strict compilation rejects them before writing an SVG, and delivery evaluation fails too. If they appear while using an unchanged compiler, report them separately and do not hand-edit the SVG to hide them.
 
 ## Delivery evaluation
 
@@ -56,4 +58,17 @@ For audit-sensitive delivery, report each view's entry, exits, unresolved items,
 
 Write each ordinary view row as `view-index | view | flow-id:* | modeled | entry=id,...; exits=id,...`. Add a `diagnostic` row addressed to `flow-id:W-nnn` for every warning, and a row addressed to `flow-id:node-id` or `flow-id:from->to` for every provisional `?`. A child normally matches a parent `task(sub)` ID. A separately triggered or time-discontinuous child instead needs an `independent-trigger | view` row and `view-plan boundary=trigger` or `time`; do not use that exception to bypass a missing parent reference.
 
-`W-440` requires an end-to-end overview plus the Level 2 views justified by a supported business boundary; otherwise `eval` reports `E-517`. Keep overview tasks at phase or subprocess level, use matching parent and child flow IDs, and apply the same rule recursively when a detail view is also oversized. Never auto-split by node count or deliver one unreadable SVG merely because lax compilation succeeded.
+Every `task(sub)` requires a matching child file even without `--parent`. Multiple views require `--parent`; each child must be reachable from that overview or a declared independent trigger, and subprocess references must not cycle. Consulting delivery also requires the semantic and visual completion records in the consulting workflow and the six-invariant table in the audit patterns. A successful evaluation checks those recorded judgments, not business truth itself.
+
+Canvas size does not require an overview or child views. The default deliverable is one complete detailed SVG; optional multi-view deliveries still require their semantic references and evidence.
+
+## Complete BPMN XML sheet
+
+`node scripts/process-model-generator.mjs source.bpmn -o complete.svg --strict`
+uses Python 3 and the bundled converter to produce one detailed SVG. Nested BPMN
+scopes are shown as named sections in that same sheet, retaining their original
+parent relationships and checking every source sequence connection; they are not
+split by canvas dimensions. Extension attributes and comments are displayed below
+the diagram and preserved exactly in its metadata. A missing source element or an
+unsupported scope prevents a complete-sheet result. This is a documentation
+representation, not executable BPMN round-trip serialization.

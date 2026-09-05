@@ -21,6 +21,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "eval:benchmark": "node --import tsx scripts/eval/benchmark.mts",
     "check:bundle": "node scripts/build.mjs --check",
     "check:public": "node scripts/check-public-tree.mjs",
     "version:show": "node scripts/release.mjs show",

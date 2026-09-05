@@ -166,11 +166,13 @@ The compiler reports DSL errors, selected structural and semantic risks, and vis
 |---|---|
 | `W-207` | Invalid Message Flow endpoint |
 | `W-235` / `W-236` | Missing incoming reply or unresolved one-way message |
-| `W-440` | Diagram is too large to serve as the only view |
-| `W-441` | Lane axis becomes physically unreadable (`E-441` in strict mode) |
+| `W-440` | Fit-to-screen text is too small; use the complete SVG at native size |
+| `W-441` | Fit-to-screen lane axis is unreadable; scrolling and zoom remain available in strict mode |
 | `N-440` | Scaled text, lane, time-axis, and crossing-hop summary |
 
 The supported subset covers common Process / Collaboration notation: pools and lanes, events, gateways, activities, collapsed subprocesses, data and artifacts, and sequence, message, data, and association flows. It does not claim full BPMN Process Modeling Conformance and does not provide execution semantics, nested expanded subprocess layout, Choreography / Conversation diagrams, manual BPMN DI coordinates, or vendor-specific extensions.
+
+Data associations follow data direction: `task -.-> doc` writes an artifact and `doc -.-> task` reads it; the same rule applies to `store`. Cross-pool delivery uses a payload-labeled message flow between send and receive activities, with a separate receiving-side artifact when the received item is retained.
 
 See the [advanced DSL reference](skills/process-model-generator/references/dsl-advanced.md) for the complete diagnostic list, supported constructs, and BPMN XML conversion behavior. A successful compile proves neither business correctness nor delivery readiness; generated SVGs still require semantic and visual review.
 

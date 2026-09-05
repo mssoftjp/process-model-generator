@@ -23,7 +23,7 @@ export interface PageBudgetResult {
   diagnostics: Diagnostic[];
 }
 
-export function diagnosePageBudget(geometry: Geometry, strict = false): PageBudgetResult {
+export function diagnosePageBudget(geometry: Geometry, _strict = false): PageBudgetResult {
   const width = Math.max(1, geometry.width);
   const height = Math.max(1, geometry.height);
   const vertical = geometry.orientation === 'vertical';
@@ -58,15 +58,15 @@ export function diagnosePageBudget(geometry: Geometry, strict = false): PageBudg
     diagnostics.push({
       level: 'warning',
       code: 'W-440',
-      message: `単一ビューだけでの提供に不向き。概要図と必要な詳細図へ分ける（${summary}）`,
+      message: `全体を縮小せず、原寸の詳細1枚をスクロール・拡大して読む（${summary}）`,
     });
   }
 
   if (metrics.laneFont < HARD_LANE_FONT_LIMIT) {
     diagnostics.push({
-      level: strict ? 'error' : 'warning',
-      code: strict ? 'E-441' : 'W-441',
-      message: `レーン軸の縮小で物理的に判読できない。分割してから提供する（${summary}）`,
+      level: 'warning',
+      code: 'W-441',
+      message: `画面に収める縮小では判読困難。原寸の詳細1枚を保ち、スクロール・拡大を提供する（${summary}）`,
     });
   }
 

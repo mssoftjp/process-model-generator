@@ -200,6 +200,58 @@ export function normalize(ir: Ir, strict = false): NormGraph {
         report.push({ level: 'warning', code: 'W-221', message: `終了イベント ${en.id} を ${t.id} の後に補完。終了結果を確認する` });
       }
     }
+
+    // 入出次数だけでは孤立した循環を見逃す。境界イベントは対象活動から
+    // 発火し、独立ハンドラは独自の入口・出口として扱う（意味を補完しない）。
+    const members = nodes.filter(n => !isDocLike(n.kind) && inPool(n, pool));
+    const ids = new Set(members.map(n => n.id));
+    const links = edges.filter(e => e.kind === 'seq' && ids.has(e.from) && ids.has(e.to)).map(e => [e.from, e.to]);
+    for (const n of members) if (isAttachedBoundary(n) && ids.has(n.attachedTo!)) links.push([n.attachedTo!, n.id]);
+    const reachable = (reverse: boolean): Set<string> => {
+      const adjacency = new Map<string, string[]>();
+      for (const [a, b] of links) {
+        const from = (reverse ? b : a)!;
+        const to = (reverse ? a : b)!;
+        const next = adjacency.get(from) ?? [];
+        next.push(to);
+        adjacency.set(from, next);
+      }
+      const seen = new Set(members.filter(n => n.kind === (reverse ? 'end' : 'start') || isOutOfBandHandler(n)).map(n => n.id));
+      for (const id of seen) for (const next of adjacency.get(id) ?? []) seen.add(next);
+      return seen;
+    };
+    const fromStart = reachable(false);
+    const toEnd = reachable(true);
+    // A terminate end on an independent parallel branch cancels sibling tokens.
+    // Only recognize a straight path: a join or decision needs token-level analysis.
+    const cancelled = new Set<string>();
+    const successors = (id: string) => links.filter(([a]) => a === id).map(([, b]) => b!);
+    const terminates = (id: string, seen = new Set<string>()): boolean => {
+      if (seen.has(id) || links.filter(([, b]) => b === id).length > 1) return false;
+      seen.add(id);
+      const n = nodeById.get(id);
+      if (n?.kind === 'end') return n.subtype === 'terminate';
+      const next = successors(id);
+      return next.length === 1 && terminates(next[0]!, seen);
+    };
+    for (const fork of members.filter(n => n.kind === 'and' && !n.subtype && fromStart.has(n.id))) {
+      const branches = successors(fork.id);
+      if (branches.length < 2 || !branches.some(id => terminates(id))) continue;
+      const seen = new Set(branches);
+      for (const id of seen) {
+        cancelled.add(id);
+        for (const next of successors(id)) if (next !== fork.id) seen.add(next);
+      }
+    }
+    for (const n of members) {
+      if (n.synthetic || isOutOfBandHandler(n)) continue;
+      const code = !fromStart.has(n.id) ? '226' : !toEnd.has(n.id) && !cancelled.has(n.id) ? '227' : undefined;
+      if (code) report.push({
+        level: strict ? 'error' : 'warning', code: `${strict ? 'E' : 'W'}-${code}`,
+        message: code === '226' ? `${n.id} は開始・独立ハンドラから到達できない。循環を含む孤立部分の入口を確認する`
+          : `${n.id} から終了・独立ハンドラへ到達できない。終了結果または継続先を確認する`,
+      });
+    }
   }
 
   // ---- 6. 本流の選挙（C-22） ----

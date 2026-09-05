@@ -79,7 +79,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     // タイトルは回転しない横書きなので、向きによらず実 x 方向の幅を要求する。
     // 縦図(幅=レーン軸)や小さな横図では帯より広くなり得るため、キャンバス幅だけを
     // 広げる(帯 bandRight はレーンの実体なので触らない)
-    const titleNeed = normalized.title ? PAD + measureText(normalized.title, TITLE_FONT_SIZE) + PAD : 0;
+    const titleNeed = normalized.title ? PAD + measureText(normalized.title, TITLE_FONT_SIZE) * 1.25 + PAD : 0;
     const geometry: Geometry = {
       title: normalized.title,
       orientation,
@@ -149,7 +149,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     if (isDocLike(kindOf.get(e.from) ?? 'task') || isDocLike(kindOf.get(e.to) ?? 'task')) continue;
     if (e.isReturn && placement.col.get(e.to)! >= placement.col.get(e.from)!) {
       diags.push({
-        level: 'warning', code: 'W-252',
+        level: strict ? 'error' : 'warning', code: 'W-252',
         message: `戻り辺 ${e.from} -> ${e.to} が時間軸の順方向に配置された（エンジン不変条件の破れの疑い）`,
       });
     }
@@ -185,7 +185,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
 
   const pageBudget = diagnosePageBudget(geometry, strict);
   diags.push(...pageBudget.diagnostics);
-  if (pageBudget.diagnostics.some((d) => d.level === 'error')) {
+  if (strict && diags.some((d) => d.level === 'error')) {
     throw new CompileError(diags);
   }
 

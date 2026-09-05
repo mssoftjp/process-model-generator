@@ -5,6 +5,16 @@ import { place } from '../src/place.ts';
 import { IMPLICIT_JOIN_FLOW, noOracleViolations } from './helpers.ts';
 
 describe('P0 正規化', () => {
+  it('孤立循環と出口のない循環を拒否し、出口付きの再試行は保つ', () => {
+    const island = `lane L\nstart s\nend e\ntask a\ntask b\ns -> e\na -> b\nb -> a`;
+    expect(() => compile(island, { strict: true })).toThrow('E-226');
+    const loop = `lane L\nstart s\nxor a\ntask b\ns -> a\na -> b\nb -> a`;
+    expect(() => compile(loop, { strict: true })).toThrow('E-227');
+    expect(() => compile(loop + '\nend e\na -> e: done', { strict: true })).not.toThrow();
+    const timeout = `lane L\nstart s\ntask t\nend e\nboundary(timer) b @t\ns -> t\nt -> e\nb -> e`;
+    expect(() => compile(timeout, { strict: true })).not.toThrow();
+  });
+
   it('暗黙合流を XOR join に昇格する (C-21)', () => {
     const src = `lane L\n A[a]\n B[b]\n C[c]\nA -> C\nB -> C`;
     const { ir } = parse(src);

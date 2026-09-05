@@ -4,9 +4,13 @@
 // --vertical は未宣言ファイル向けの既定値。向きの正式な情報源である
 // DSL の orientation 宣言があれば、そちらが優先される。
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { compile, CompileError } from './compile.ts';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { detailSheet } from './detail-sheet.ts';
 import { evaluateDelivery } from './eval.ts';
 
 declare const __PROCESS_MODEL_GENERATOR_VERSION__: string;
@@ -69,11 +73,23 @@ const emitNormalized = args.includes('--emit-normalized');
 const verticalDefault = args.includes('--vertical');
 
 if (!input) {
-  print(process.stderr, 'usage: process-model-generator <input.flow> [-o out.svg] [--strict] [--vertical] [--emit-normalized] | process-model-generator eval --dir <dir> --report <review.md> [--parent <flow-id>] [--consulting] | --version');
+  print(process.stderr, 'usage: process-model-generator <input.flow|input.bpmn> [-o out.svg] [--strict] [--vertical] [--emit-normalized] | process-model-generator eval --dir <dir> --report <review.md> [--parent <flow-id>] [--consulting] | --version');
   process.exit(2);
 }
 
 try {
+  if (input.endsWith('.bpmn')) {
+    const directory=mkdtempSync(tmpdir()+'/bpmn-detail-');
+    try {
+      execFileSync('python3',[fileURLToPath(new URL('./bpmn-detail.py',import.meta.url)),input,directory,input]);
+      const result=detailSheet(directory,verticalDefault ? 'vertical' : 'horizontal',__PROCESS_MODEL_GENERATOR_VERSION__);
+      if (output) { mkdirSync(dirname(output),{recursive:true}); writeFileSync(output,result.svg); }
+      else print(process.stdout,result.svg);
+      if (emitNormalized) print(process.stderr,readFileSync(directory+'/detail.json','utf8'));
+      print(process.stderr,`wrote complete detailed sheet (${result.width}x${result.height})`);
+    } finally { rmSync(directory,{recursive:true,force:true}); }
+    process.exit(0);
+  }
   const source = readFileSync(input, 'utf8');
   const result = compile(source, {
     strict,

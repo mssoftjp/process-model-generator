@@ -50,7 +50,7 @@ describe('release packaging', () => {
     expect(skill.get('SKILL.md')!.toString('utf8')).toContain('node scripts/process-model-generator.mjs');
     expect(skill.get('references/consulting-workflow.md')!.toString('utf8')).toContain('node scripts/process-model-generator.mjs');
     expect(skill.get('SKILL.md')!.toString('utf8')).toContain('W-440');
-    expect(skill.get('SKILL.md')!.toString('utf8')).toContain('E-441');
+    expect(skill.get('SKILL.md')!.toString('utf8')).toContain('one complete detailed SVG');
     expect(plugin.has('.codex-plugin/plugin.json')).toBe(true);
     expect(plugin.get('LICENSE')!.toString('utf8')).toContain('Copyright (c) 2026 Musashino Software');
     expect(plugin.has('skills/process-model-generator/LICENSE')).toBe(false);

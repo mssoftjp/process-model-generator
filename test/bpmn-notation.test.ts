@@ -215,7 +215,7 @@ describe('Message Flow の端点', () => {
     expect(compile(bad).diagnostics.some((d) => d.code === 'W-207')).toBe(true);
     expect(() => compile(bad, { strict: true })).toThrow(CompileError);
 
-    const ok = collaboration('start(message) receive[受信開始]');
+    const ok = collaboration('start(message) receive[受信開始]\nend done[受信完了]\nreceive -> done');
     expect(compile(ok, { strict: true }).diagnostics.some((d) => d.code.endsWith('207'))).toBe(false);
   });
 });
@@ -425,6 +425,23 @@ describe('Activity マーカーと Call Activity', () => {
 });
 
 describe('default flow / conditional / main-path hint', () => {
+  it('宣言順で通常経路を捏造せず、=> のある枝だけを強調する', () => {
+    for (const orientation of ['horizontal', 'vertical']) {
+      for (const branches of ['g -> A: yes\ng -> B: no', 'g -> B: no\ng -> A: yes']) {
+        const source = `orientation ${orientation}\nlane L\nstart s\nxor g\ntask A\ntask B\nend e\ns -> g\n${branches}\nA -> e\nB -> e`;
+        const neutral = compile(source, { strict: true });
+        expect(neutral.svg).not.toContain('data-main-path');
+        for (const id of ['A', 'B']) {
+          const group = neutral.svg.match(new RegExp(`<g id="node-${id}">[\\s\\S]*?</g>`))![0];
+          expect(group).toContain('stroke-width="1.25"');
+        }
+        const explicit = compile(source.replace('g -> A:', 'g => A:'), { strict: true });
+        expect(explicit.svg.match(/data-main-path="true"/g)).toHaveLength(1);
+        expect(explicit.svg.match(/<g id="edge-[^"]*_g_A">[\s\S]*?<\/g>/)![0]).toContain('stroke-width="2"');
+      }
+    }
+  });
+
   it('=> は本流ヒントであり default slash を付けない', () => {
     const r = compile(`lane L
 start s

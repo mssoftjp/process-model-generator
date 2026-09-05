@@ -482,10 +482,11 @@ function assignRows({ g, col, docIds, nodeById }: PlaceCtx) {
     ch.nodes.every((m) => m.kind === 'doc') &&
     !g.edges.some((e) => e.kind !== 'assoc' && ch.nodes.some((m) => m.id === e.from || m.id === e.to)) &&
     !g.edges.some((e) => e.kind === 'assoc' && ch.nodes.some((m) => m.id === e.from));
+  const writersOf = (ch: Chain) => [...new Set(
+    g.edges.filter((e) => e.kind === 'assoc' && ch.nodes.some((m) => m.id === e.to)).map((e) => e.from),
+  )];
   const lastWriterOf = (ch: Chain) => {
-    const writers = [...new Set(
-      g.edges.filter((e) => e.kind === 'assoc' && ch.nodes.some((m) => m.id === e.to)).map((e) => e.from),
-    )];
+    const writers = writersOf(ch);
     if (writers.length === 0) return '';
     return writers.sort((a, b) => (col.get(b)! - col.get(a)!) || a.localeCompare(b))[0]!;
   };
@@ -521,6 +522,47 @@ function assignRows({ g, col, docIds, nodeById }: PlaceCtx) {
       packed.add(one);
       placeChain(one);
     }
+  }
+
+  // 工程と同じ予約表で、書き込み専用ストアを内側の空き行へ詰める。
+  // doc は工程インスタンスの状態なので既存の列・チェーン詰めを保ち、永続ストアの再掲だけを
+  // 工程チェーンを押し退けず、その予約区間の直後へ同じ書き手ごとに連続配置する。
+  const laneWritersOf = (ch: Chain) => writersOf(ch).filter((id) => nodeById.get(id)?.lane === ch.lane);
+  const outputStore = (ch: Chain) => spineHasLane.has(ch.lane) && ch.nodes.length === 1 && ch.nodes.every((m) =>
+    m.kind === 'store' &&
+    g.edges.some((e) => e.kind === 'assoc' && e.to === m.id) &&
+    !g.edges.some((e) => e.from === m.id || (e.kind !== 'assoc' && e.to === m.id))) &&
+    laneWritersOf(ch).some((id) => g.edges.some((e) => e.kind === 'seq' && !e.synthetic && (e.from === id || e.to === id)));
+  const outputStoreGroups = new Map<string, Chain[]>();
+  for (const ch of chains.filter(outputStore)) {
+    const writers = laneWritersOf(ch).sort();
+    if (writers.length === 0) continue;
+    const key = `${ch.lane}:${writers.join(',')}`;
+    outputStoreGroups.set(key, [...(outputStoreGroups.get(key) ?? []), ch]);
+  }
+  for (const group of [...outputStoreGroups.values()].sort((a, b) => a[0]!.c0 - b[0]!.c0)) {
+    const lane = group[0]!.lane;
+    const targetRow = spineHasLane.has(lane) ? 1 : 0;
+    if (group.every((ch) => row.get(ch.nodes[0]!.id) === targetRow)) continue;
+    const res = reserved.get(lane)!;
+    for (const ch of group) {
+      const oldRow = row.get(ch.nodes[0]!.id)!;
+      const at = res.findIndex((iv) => iv.row === oldRow && iv.c0 === ch.c0 && iv.c1 === ch.c1);
+      if (at >= 0) res.splice(at, 1);
+    }
+    const writers = laneWritersOf(group[0]!);
+    let start = Math.max(...writers.map((id) => col.get(id) ?? 0)) + 1;
+    for (;;) {
+      const overlap = res.filter((iv) => iv.row === targetRow && iv.c0 <= start + group.length - 1 && start <= iv.c1);
+      if (overlap.length === 0) break;
+      start = Math.max(...overlap.map((iv) => iv.c1)) + 1;
+    }
+    group.sort((a, b) => a.firstDecl - b.firstDecl).forEach((ch, i) => {
+      const node = ch.nodes[0]!;
+      col.set(node.id, start + i);
+      row.set(node.id, targetRow);
+      res.push({ row: targetRow, c0: start + i, c1: start + i });
+    });
   }
 
   for (const n of g.nodes) {

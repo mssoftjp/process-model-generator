@@ -10,6 +10,35 @@ import type { EdgeGeom } from '../src/types.ts';
 import { BRANCH_FLOW, IMPLICIT_JOIN_FLOW, COLLABORATION_FLOW, VERTICAL_MESSAGE_LABEL_FLOW, noOracleViolations } from './helpers.ts';
 
 describe('分岐と出口の視覚文法', () => {
+  it('同列の文書・保管先出力は手前のノードを短い側面経路で避ける', () => {
+    const r = noOracleViolations(`lane accounting
+task write[記録する]
+task exception[例外処理]
+store archive[保管先]
+write -.-> archive`);
+    const edge = r.geometry.edges.find((e) => e.from === 'write' && e.to === 'archive')!;
+    const target = r.geometry.nodes.find((n) => n.id === 'archive')!;
+    expect(edge.points).toHaveLength(4);
+    expect(edge.points.at(-1)).toEqual({ x: target.x + target.w, y: target.cy });
+  });
+
+  it('同列の複数保管先も同じ側面経路で分岐する', () => {
+    const r = noOracleViolations(`lane accounting
+task write[記録する]
+task exception[例外処理]
+store ledger[台帳]
+store archive[保管先]
+write -.-> ledger
+write -.-> archive`);
+    const edges = r.geometry.edges.filter((e) => e.from === 'write' && e.kind === 'assoc');
+    expect(edges).toHaveLength(2);
+    for (const edge of edges) {
+      const target = r.geometry.nodes.find((n) => n.id === edge.to)!;
+      expect(edge.points).toHaveLength(4);
+      expect(edge.points.at(-1)).toEqual({ x: target.x + target.w, y: target.cy });
+    }
+  });
+
   it('オフセット付きメッセージ端点は円イベントの実境界へ着地する', () => {
     const r = noOracleViolations(COLLABORATION_FLOW);
     const byId = new Map(r.geometry.nodes.map((n) => [n.id, n]));

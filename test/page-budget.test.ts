@@ -68,8 +68,8 @@ describe('page-budget diagnostics', () => {
     const lax = diagnosePageBudget(emptyGeometry('horizontal', 1600, 2101));
     expect(lax.diagnostics.map((d) => d.code)).toEqual(['N-440', 'W-440', 'W-441']);
     const strict = diagnosePageBudget(emptyGeometry('horizontal', 1600, 2101), true);
-    expect(strict.diagnostics.map((d) => d.code)).toEqual(['N-440', 'W-440', 'E-441']);
-    expect(strict.diagnostics[2]!.level).toBe('error');
+    expect(strict.diagnostics.map((d) => d.code)).toEqual(['N-440', 'W-440', 'W-441']);
+    expect(strict.diagnostics[2]!.level).toBe('warning');
   });
 
   it('keeps ordinary diagrams silent and long diagrams renderable with W-440', () => {
@@ -82,18 +82,12 @@ describe('page-budget diagnostics', () => {
     expect(() => compile(source, { strict: true })).not.toThrow();
   });
 
-  it('stops strict compilation when many lanes become physically unreadable', () => {
+  it('retains a complete single SVG even when fit-to-screen is unreadable', () => {
     const source = manyLaneProcess(32);
     const lax = compile(source);
     expect(lax.diagnostics.map((d) => d.code)).toContain('W-441');
     expect(lax.svg).toContain('<svg');
 
-    try {
-      compile(source, { strict: true });
-      expect.unreachable('strict compilation should fail');
-    } catch (error) {
-      expect(error).toBeInstanceOf(CompileError);
-      expect((error as CompileError).diagnostics.map((d) => d.code)).toContain('E-441');
-    }
+    expect(() => compile(source, { strict: true })).not.toThrow();
   });
 });

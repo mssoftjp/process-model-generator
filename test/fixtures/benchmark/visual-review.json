@@ -1,0 +1,100 @@
+{
+  "monthly-horizontal": {
+    "svgHash": "98244b79818e1c5ecceeae663191da2111a9a422301a9f3203cb4f558ad4cd93",
+    "verdict": "PASS",
+    "traceability": "Separate message and timer starts remain in separate pools without a sequence dependency.",
+    "readability": "All labels fit at native size; both independent outcomes are visible.",
+    "emphasis": "No branch is emphasized; task sizes differ slightly with text wrapping."
+  },
+  "monthly-vertical": {
+    "svgHash": "d00e45fc4fd02cd5a6a9bb34a1f984e972e905984d73427a76d29486701ee04c",
+    "verdict": "PASS",
+    "traceability": "Separate message and timer starts remain in separate pools without a sequence dependency.",
+    "readability": "All labels fit at native size; both independent outcomes are visible.",
+    "emphasis": "No branch is emphasized; task sizes differ slightly with text wrapping."
+  },
+  "approvals-horizontal": {
+    "svgHash": "f5681060915eba2987492b93013857f3b21f14e597ba9a854eb8d69dea3a780a",
+    "verdict": "PASS",
+    "traceability": "Both approval branches rejoin at a parallel gateway before the end.",
+    "readability": "Role headers and approval tasks remain readable; split/join labels are technical fixture wording.",
+    "emphasis": "Both approval tasks have equal dimensions and neutral strokes."
+  },
+  "approvals-vertical": {
+    "svgHash": "d37d0e4c96ce222c825293958ad48cadf74554d79c347f42de06d2cfd123e612",
+    "verdict": "PASS",
+    "traceability": "Both approval branches rejoin at a parallel gateway before the end.",
+    "readability": "Role headers and approval tasks remain readable; split/join labels are technical fixture wording.",
+    "emphasis": "Both approval tasks have equal dimensions and neutral strokes."
+  },
+  "invoice-horizontal": {
+    "svgHash": "0fd7eccf04c68ff7dfd47c5bff843e5f502a86cc3ea1d98bf114d2c1c2e41ecd",
+    "verdict": "PASS",
+    "traceability": "Write produces Invoice, Send consumes it, and the message reaches the black-box Supplier.",
+    "readability": "Document and task labels are legible; crossed association and message routes require attention.",
+    "emphasis": "Document remains in Accounting; no inferred preferred branch is emphasized."
+  },
+  "invoice-vertical": {
+    "svgHash": "17df703898117b10bc87448fad8074bce2a1ab895d65b7cf4d30819de4e3e68a",
+    "verdict": "PASS",
+    "traceability": "Write produces Invoice, Send consumes it, and the message reaches the black-box Supplier.",
+    "readability": "Document and task labels are legible; crossed association and message routes require attention.",
+    "emphasis": "Document remains in Accounting; no inferred preferred branch is emphasized."
+  },
+  "starter-horizontal": {
+    "svgHash": "d6fc70a125fdaf25521c32ac57ea2afaec83f60d7bea008d5ef0bc606a7bce3f",
+    "verdict": "PASS",
+    "traceability": "Yes returns to Scan and No continues, matching the source XML even though the wording is counterintuitive.",
+    "readability": "Task labels are legible at native size; vertical event label has little right margin.",
+    "emphasis": "Neutral branch strokes preserve the absence of an explicit preferred path."
+  },
+  "starter-vertical": {
+    "svgHash": "dc248b7d734dad71e4efc177da954cb278b6eb930fab48879c1213399c61939c",
+    "verdict": "PASS",
+    "traceability": "Yes returns to Scan and No continues, matching the source XML even though the wording is counterintuitive.",
+    "readability": "Task labels are legible at native size; vertical event label has little right margin.",
+    "emphasis": "Neutral branch strokes preserve the absence of an explicit preferred path."
+  },
+  "pizza-horizontal": {
+    "svgHash": "95ba6a3bed11ba7cfdc4779190e33a33a6ae9034b388697a2024ef9387e16265",
+    "verdict": "PASS",
+    "traceability": "At native size, blue dashed communication remains distinct from gray sequence flow through the vendor lane crossings. Followed order, pizza, payment/receipt, question and response to their actual endpoints.",
+    "readability": "Payment and receipt use separate parallel paths and visible arrowheads. Labels remain readable at native size; fit-to-screen reduction is not used. Dense corridors still benefit from zoom.",
+    "emphasis": "Blue marks only message-flow type, with standard dashes/open arrows retained; it does not mark a preferred business branch."
+  },
+  "pizza-vertical": {
+    "svgHash": "6f2cc6b9ebadba55f1fafe5e772a634edcdfe8e2c62e90340ece6d1c41b10518",
+    "verdict": "PASS",
+    "traceability": "At native size, blue dashed communication remains distinct from gray sequence flow through the vendor lane crossings. Followed order, pizza, payment/receipt, question and response to their actual endpoints.",
+    "readability": "Payment and receipt use separate parallel paths and visible arrowheads. Labels remain readable at native size; fit-to-screen reduction is not used. Dense corridors still benefit from zoom.",
+    "emphasis": "Blue marks only message-flow type, with standard dashes/open arrows retained; it does not mark a preferred business branch."
+  },
+  "extensions-horizontal": {
+    "svgHash": "25e149cf57e0883dda0293139c6f676655b9bdb7c052f1d4ad56976934c1f72b",
+    "verdict": "PASS",
+    "traceability": "Base process plus original suitability attribute, dates, authors and both comments are visible on the same SVG; exact extension XML is retained in metadata.",
+    "readability": "The QA details are readable text rows labeled with the owning task; no raw namespace declaration interrupts the process diagram.",
+    "emphasis": "The QA score is shown as original metadata, not interpreted as an approval or branch priority."
+  },
+  "extensions-vertical": {
+    "svgHash": "c185ea1baf0386f574b8953de8fb001957ae07b4312ef6f13a30bc1287d50602",
+    "verdict": "PASS",
+    "traceability": "Base process plus original suitability attribute, dates, authors and both comments are visible on the same SVG; exact extension XML is retained in metadata.",
+    "readability": "The QA details are readable text rows labeled with the owning task; no raw namespace declaration interrupts the process diagram.",
+    "emphasis": "The QA score is shown as original metadata, not interpreted as an approval or branch priority."
+  },
+  "nested-horizontal": {
+    "svgHash": "923f14ab08c2ca38cfad09750b1ff0f024f62585dba372b3a22661f5f78021fc",
+    "verdict": "PASS",
+    "traceability": "The root and all six original subprocess scopes are included on one sheet with parent headings; scope-local sequence edges are preserved without adding cross-scope sequence dependencies.",
+    "readability": "Boundary label now reads Error caught. Full titles and lane headings remain visible, including the long Accounting label, with native-size scrolling through the single sheet.",
+    "emphasis": "Subprocess markers preserve containment; source uncertainty in the Accounting label remains visible. Extension metadata is displayed separately from the activity flow on the same sheet."
+  },
+  "nested-vertical": {
+    "svgHash": "666c81f697ed5c5a058e98ed302a37fabcafe7fdd3b50f9d37f16162a413bfa2",
+    "verdict": "PASS",
+    "traceability": "The root and all six original subprocess scopes are included on one sheet with parent headings; scope-local sequence edges are preserved without adding cross-scope sequence dependencies.",
+    "readability": "Boundary label now reads Error caught. Full titles and lane headings remain visible, including the long Accounting label, with native-size scrolling through the single sheet.",
+    "emphasis": "Subprocess markers preserve containment; source uncertainty in the Accounting label remains visible. Extension metadata is displayed separately from the activity flow on the same sheet."
+  }
+}

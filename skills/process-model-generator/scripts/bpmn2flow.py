@@ -176,6 +176,15 @@ def main(src, dst, source_url, stats_json=None):
     if mixed_orientation:
         add_unsup('isHorizontal', '', '', '縦横混在DI。横として変換')
 
+    # Rendering a process does not preserve vendor execution/review metadata.
+    for el in root.iter():
+        if el.tag == f'{B}extensionElements' and len(el):
+            add_unsup('extensionElements', el.get('id'), '', '拡張要素の内容は未変換')
+        if el.tag.startswith(B):
+            for attr in el.attrib:
+                if attr.startswith('{') and not attr.startswith('{http://www.w3.org/2001/XMLSchema-instance}'):
+                    add_unsup('extensionAttribute', el.get('id'), attr, '名前空間付き拡張属性は未変換')
+
     # choreography / conversation は対象外
     for tag in ('choreography', 'conversation', 'subConversation', 'callConversation'):
         for el in root.iter(f'{B}{tag}'):
@@ -185,6 +194,7 @@ def main(src, dst, source_url, stats_json=None):
     nodes = {}  # id -> (kind, label, provisional, attachedTo|None)
     edges = []  # (kind, src, dst, label, mainHint, isDefault, assocKind)
     node_lane = {}
+    node_process = {el.get('id'): proc.get('id') for proc in processes for el in proc.iter() if el.get('id')}
     nested_ids = set()
 
     def walk_nested(container, owner_id, owner_tag):
@@ -256,6 +266,8 @@ def main(src, dst, source_url, stats_json=None):
                     continue
                 nodes[eid] = (kind, name or eid, False, None)
                 add_sup(tag, eid, name)
+                if inner_flow:
+                    walk_nested(el, eid, tag)
                 continue
             if tag in TASK_TAGS:
                 sub = TASK_SUB.get(tag)
@@ -327,7 +339,7 @@ def main(src, dst, source_url, stats_json=None):
                 if not cancel:
                     toks.append('nonint')
                 kind = f"boundary({','.join(toks)})" if toks else 'boundary'
-                label = name or eid
+                label = name or (f'{sub.title()} caught' if sub else '')
                 if attached:
                     nodes[eid] = (kind, label, False, attached)
                     add_sup(tag, eid, name)
@@ -415,6 +427,38 @@ def main(src, dst, source_url, stats_json=None):
             nodes[mid] = ('doc(message)', clean(msg.get('name')) or mid, False, None)
             add_sup('message', mid, clean(msg.get('name')))
 
+    # XML の所属プロセスを保つ。レーン参照のない成果物は同じプロセスの
+    # 書き手（無ければ読み手）のそばへ置き、責任が曖昧なら ? を残す。
+    for eid in list(nodes):
+        if eid in node_lane:
+            continue
+        kind, label, provisional, attached = nodes[eid]
+        pid = node_process.get(eid)
+        own_lanes = [lane for lane in lanes if lane[3] == pid]
+        if not own_lanes:
+            records = [record for record in supported if record[1] == eid]
+            for record in records:
+                supported.remove(record)
+                add_unsup(*record, '所属プロセスを特定できない。別参加者には配置しない')
+            del nodes[eid]
+            continue
+        partners = [attached] if attached else [s for k, s, t, *_ in edges if k == 'assoc' and t == eid]
+        if not partners:
+            partners = [t for k, s, t, *_ in edges if k == 'assoc' and s == eid]
+        anchors = {node_lane[p] for p in partners if p in node_lane and node_process.get(p) == pid}
+        chosen = next((lane for lane in own_lanes if len(anchors) == 1 and lane[1] in anchors), None)
+        if chosen is None and len(own_lanes) == 1:
+            chosen = own_lanes[0]
+        if chosen is None:
+            chosen = next((lane for lane in own_lanes if lane[1] == 'Unassigned responsibility'), None)
+            if chosen is None:
+                chosen = (cross_of(eid), 'Unassigned responsibility', [], pid)
+                lanes.append(chosen)
+            nodes[eid] = (kind, label, True, attached)
+            add_unsup('laneAssignment', eid, label, '責任レーンが未確定。? として要確認')
+        chosen[2].append(eid)
+        node_lane[eid] = chosen[1]
+
     proc_has_nodes = {pr.get('id'): any(el.get('id') in nodes for el in pr.iter()) for pr in processes}
     pool_names = {}  # processRef -> (pool id, label)
     blackbox_entries = []  # (cross position, pool id, label, participant id)
@@ -433,6 +477,12 @@ def main(src, dst, source_url, stats_json=None):
         else:
             blackbox_entries.append((pool_y[pid], pid, label, pt.get('id')))
         add_sup('participant', pt.get('id'), label)
+    # Collaboration 宣言がなくても独立した process を混ぜない。
+    for proc in processes:
+        prid = proc.get('id')
+        if prid not in pool_names and (pool_names or len(processes) > 1):
+            pool_names[prid] = (f'p{pn}', clean(proc.get('name')) or prid)
+            pn += 1
     blackbox_pools = {pid for _, pid, _, _ in blackbox_entries}
     blackbox_pools |= {pid for prid, (pid, _) in pool_names.items() if not proc_has_nodes.get(prid)}
 
@@ -468,7 +518,11 @@ def main(src, dst, source_url, stats_json=None):
     out.append(f'# conversion-stats: supported={len(supported)} unsupported={len(unsupported)}')
     for tag, eid, name, reason in unsupported:
         out.append(f'# unsupported: {tag}\t{eid}\t{name}\t{reason}')
-    out.append(f'flow {title}')
+    model = root.find(f'{B}collaboration')
+    if model is None:
+        model = processes[0] if processes else root
+    model_id = re.sub(r'[^\w]', '_', model.get('id') or 'process')
+    out.append(f'flow {model_id}[{title or model_id}]')
     if vertical:
         out.append('orientation vertical')
     out.append('')
@@ -502,10 +556,6 @@ def main(src, dst, source_url, stats_json=None):
                 emitted_pool = pid
         out.append(f'lane {lname}')
         for r in sorted(placed_all, key=main_of):
-            emit_node(out, r, nodes[r], sid)
-    orphan = [r for r in nodes if r not in node_lane]
-    if orphan:
-        for r in sorted(orphan, key=main_of):
             emit_node(out, r, nodes[r], sid)
     out.append('')
     for kind, s, d, label, main, is_def, assoc_kind in edges:
@@ -550,6 +600,7 @@ def main(src, dst, source_url, stats_json=None):
         'source': src,
         'supported': [{'tag': t, 'id': i, 'name': n} for t, i, n in supported],
         'unsupported': [{'tag': t, 'id': i, 'name': n, 'reason': r} for t, i, n, r in unsupported],
+        'nodeIds': short,
         'supportedCount': len(supported),
         'unsupportedCount': len(unsupported),
     }

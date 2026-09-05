@@ -402,6 +402,56 @@ later -.-> s`;
     noOracleViolations(src);
   });
 
+  it('工程の予約区間を保ったまま書き込み専用ストアを内側へ詰める', () => {
+    const src = `lane L
+start s
+xor g[分岐]
+task write[記録]
+task exception[例外]
+task next[次工程]
+end done[完了]
+store ledger[台帳]
+s -> g
+g => write
+g -> exception
+write -> next
+next -> done
+write -.-> ledger`;
+    const n = normalize(parse(src).ir);
+    const p = place(n);
+    expect(p.row.get('exception')).toBe(1);
+    expect(p.row.get('ledger')).toBe(1);
+    expect(p.col.get('ledger')).toBeGreaterThan(p.col.get('exception')!);
+    noOracleViolations(src);
+  });
+
+  it('同じ書き手の複数ストアは工程の予約区間直後へ連続配置する', () => {
+    const src = `lane L
+start s
+xor branch[分岐]
+task finish[完了処理]
+end done[完了]
+task ask[確認]
+catch(message) reply[回答]
+store ledger[台帳]
+store archive[保管先]
+s -> branch
+branch => finish
+branch -> ask
+finish -> done
+ask -> reply
+finish -.-> ledger
+finish -.-> archive`;
+    const n = normalize(parse(src).ir);
+    const p = place(n);
+    expect(p.row.get('ask')).toBe(1);
+    expect(p.row.get('ledger')).toBe(1);
+    expect(p.row.get('archive')).toBe(1);
+    expect(p.col.get('ledger')).toBe(p.col.get('reply')! + 1);
+    expect(p.col.get('archive')).toBe(p.col.get('ledger')! + 1);
+    noOracleViolations(src);
+  });
+
   it('非本流の書き手と同じセルへ書類を重ねない', () => {
     const src = `lane L
 start s
@@ -531,6 +581,32 @@ n -.- close`;
 });
 
 describe('読み手のある文書の列', () => {
+  it('同列の入出力文書はモデルの宣言順を保つ', () => {
+    const src = `lane L
+start receive[受領]
+task fetch[取得]
+task use[照合]
+task retry[再取得]
+doc order[注文書]
+doc receipt[検収書]
+doc invoice[請求書]
+receive -> fetch
+fetch -> use
+retry -> use
+fetch -.-> order
+fetch -.-> receipt
+receive -.-> invoice
+order -.-> use
+receipt -.-> use
+invoice -.-> use`;
+    const p = place(normalize(parse(src).ir));
+    expect(p.col.get('order')).toBe(p.col.get('receipt'));
+    expect(p.col.get('receipt')).toBe(p.col.get('invoice'));
+    expect(p.row.get('order')!).toBeLessThan(p.row.get('receipt')!);
+    expect(p.row.get('receipt')!).toBeLessThan(p.row.get('invoice')!);
+    noOracleViolations(src);
+  });
+
   it('書き手直後で固定せず最初の読み手の直前へ寄せる', () => {
     const n = normalize(parse(`lane L
   task make[作成]

@@ -1,0 +1,17 @@
+flow approvals[Two independent approvals required]
+lane coordinator[Coordinator]
+start request[Approval requested]
+and split
+lane first[First approver]
+task(user) approve1[Approve request]
+lane second[Second approver]
+task(user) approve2[Approve request]
+lane coordinator
+and join
+end approved[Both approvals obtained]
+request -> split
+split -> approve1
+split -> approve2
+approve1 -> join
+approve2 -> join
+join -> approved

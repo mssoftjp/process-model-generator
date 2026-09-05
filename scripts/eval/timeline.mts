@@ -58,9 +58,10 @@ const figures = names.map((name) => {
 });
 const first = versions[0]!.id;
 const last = versions[versions.length - 1]!.id;
-const payload = JSON.stringify({ versions, figures, svgs, hasVertical, first, last }).replace(/<\/script/gi, '<\\/script');
+const payload = Buffer.from(JSON.stringify({ versions, figures, svgs, hasVertical, first, last }), 'utf8').toString('base64');
 
-const html = `<title>Layout Timeline</title>
+const html = `<meta charset="utf-8">
+<title>Layout Timeline</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
@@ -161,10 +162,11 @@ input[type=range]{accent-color:var(--focus);width:140px}
     <div class="layer b" id="layerB"><img alt="Snapshot B"></div>
   </div></div>
 </main>
-<script type="application/json" id="data">${payload}</script>
+<script type="application/octet-stream" id="data">${payload}</script>
 <script>
 (() => {
-  const data = JSON.parse(document.getElementById('data').textContent);
+  const bytes = Uint8Array.from(atob(document.getElementById('data').textContent.trim()), (c) => c.charCodeAt(0));
+  const data = JSON.parse(new TextDecoder().decode(bytes));
   const url = (i) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(data.svgs[i]);
   const state = { fig: 0, a: data.first, b: data.last, mode: 'overlay', opacity: 1, wipe: 0.5, zoom: 1, orient: 'h' };
   try { Object.assign(state, JSON.parse(localStorage.getItem('layout-timeline') || '{}')); } catch {}

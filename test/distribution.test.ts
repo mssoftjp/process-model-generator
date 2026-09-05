@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -71,7 +72,7 @@ task(foo"><script>alert</script><rect data-pwn="yes) A[x]`;
     }
   });
 
-  it('does not write a physically unreadable SVG under --strict', () => {
+  it('writes one complete detailed SVG under --strict with a fit-to-screen warning', () => {
     const dir = mkdtempSync(join(tmpdir(), 'process-model-generator-strict-budget-'));
     const input = join(dir, 'wide.flow');
     const output = join(dir, 'wide.svg');
@@ -87,9 +88,10 @@ task(foo"><script>alert</script><rect data-pwn="yes) A[x]`;
       const result = spawnSync(process.execPath, [BUNDLE, input, '-o', output, '--strict'], {
         encoding: 'utf8',
       });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('E-441');
-      expect(existsSync(output)).toBe(false);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('W-441');
+      expect(existsSync(output)).toBe(true);
+      expect(readFileSync(output,'utf8')).toContain('Step 31');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -112,10 +114,13 @@ t -> e`;
     try {
       writeFileSync(input, source, 'utf8');
       writeFileSync(output, compile(source, { strict: true, version }).svg, 'utf8');
+      const hash = createHash('sha256').update(readFileSync(output)).digest('hex');
       writeFileSync(report, [
         '| claim | kind | source | view:id | status | reason |',
         '|---|---|---|---|---|---|',
         '| view-index | view | generated:flow | sample:* | modeled | entry=s; exits=e |',
+        '| Work follows start | fact | test:fixture | sample:t | modeled | Synthetic example |',
+        `| delivery-review | view | test:fixture | sample:* | modeled | semantic=pass; visual=pass; svg-sha256=${hash} |`,
         '',
       ].join('\n'), 'utf8');
       const result = spawnSync(process.execPath, [BUNDLE, 'eval', '--dir', dir, '--report', report, '--consulting'], {

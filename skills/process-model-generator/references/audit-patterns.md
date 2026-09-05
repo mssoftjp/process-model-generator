@@ -44,6 +44,7 @@ supplier ~> answer: Cancellation response
 
 - A deferral such as next month, a batch date, or a deadline must either wait on an explicit timer/next-cycle event or end the current run with a named deferred outcome. Decide any exception that still runs in this cycle, such as emergency payment, on the late/deferred branch before that end; do not connect the deferred outcome directly to ordinary current-cycle work.
 - For each audit control such as approval, matching, or payment execution, model the material evidence and system of record named by the source, or list the omitted artifact and reason in the report. A zero-artifact model is not made audit-ready by passing `W-105`.
+- For each material document or data item, walk the diagram in data direction and identify its source, recipient, use, and retention destination. Model a real receive, attach, transfer, convert, or file action as an activity when it changes responsibility, evidence, control, channel, system, or state. If one of those lifecycle facts is in scope but unsupported, keep it unresolved in the ledger; do not treat a nearby artifact glyph as proof that the handoff or filing occurred.
 
 ## Decomposed views
 
@@ -58,4 +59,6 @@ supplier ~> answer: Cancellation response
 |---|---|---|---|---|---|
 ```
 
-Name the invariant `scope/trigger`, `participant/lane`, `entry/precondition`, `exit/continuation`, `exception/return/time`, or `artifact/system/control`. Every row must cite a parent `flow` or node/edge id, a child `flow` or node/edge id, and a source locator from the original materials. Verdict is `supported`, `mismatch`, or `unresolved`. `eval` does not parse or score this table. A `mismatch` or `unresolved` row is not a finished delivery; return it to Frame, Elicit, Architecture, or Synthesize.
+Name the invariant `scope/trigger`, `participant/lane`, `entry/precondition`, `exit/continuation`, `exception/return/time`, or `artifact/system/control`. For each actual parent-child reference, provide exactly one row per invariant. Use the child flow ID in `child`, a real `parent-flow:node-id` or `parent-flow:*` token in `parent claim`, and a real `child-flow:node-id` or `child-flow:*` token plus an original source locator in `child evidence`. Separate these tokens with spaces; an edge target uses `from->to`. For example: `detail | exit/continuation | overview:detail | detail:done interview:turn4 | supported | none`.
+
+Verdict is `supported`, `mismatch`, or `unresolved`. `eval --consulting` checks the table's completeness, references, and verdicts; it does not infer business truth. Missing or duplicate invariants, invalid references, and any `mismatch` or `unresolved` row fail with `E-518`. Return those findings to Frame, Elicit, Architecture, or Synthesize. Independent views use their own scoped delivery review; their subprocess children still require the six-invariant comparison.

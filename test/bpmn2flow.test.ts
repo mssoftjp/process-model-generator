@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { compile } from '../src/compile.ts';
+import { evaluateDelivery } from '../src/eval.ts';
 
 const SCRIPT = join(process.cwd(), 'skills/process-model-generator/scripts/bpmn2flow.py');
 
@@ -24,6 +25,34 @@ function convert(xml: string, sourceUrl = 'test://fixture'): { flow: string; sta
 const NS = `xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"`;
 
 describe('BPMN XML → DSL → SVG', () => {
+  it('レーン参照のない文書を元の参加者と書き手のレーンに保つ', () => {
+    const xml = `<definitions ${NS}>
+      <process id="company" name="Company">
+        <laneSet><lane id="accounting" name="Accounting"><flowNodeRef>s</flowNodeRef><flowNodeRef>write</flowNodeRef><flowNodeRef>e</flowNodeRef></lane></laneSet>
+        <startEvent id="s"/><task id="write" name="Write invoice"><dataOutputAssociation id="da"><targetRef>doc</targetRef></dataOutputAssociation></task><endEvent id="e"/>
+        <dataObjectReference id="doc" name="Invoice"/>
+        <sequenceFlow id="f1" sourceRef="s" targetRef="write"/><sequenceFlow id="f2" sourceRef="write" targetRef="e"/>
+      </process>
+      <process id="supplier" name="Supplier"><startEvent id="ss"/><endEvent id="se"/><sequenceFlow id="sf" sourceRef="ss" targetRef="se"/></process>
+      <collaboration id="c"><participant id="cp" name="Company" processRef="company"/><participant id="sp" name="Supplier" processRef="supplier"/></collaboration>
+    </definitions>`;
+    for (const input of [xml, xml.replace(/<collaboration[\s\S]*<\/collaboration>/, '')]) {
+      const { flow, stats } = convert(input);
+      const r = compile(flow, { strict: true });
+      const doc = r.normalized.nodes.find(n => n.label === 'Invoice')!;
+      expect(r.normalized.lanes.find(l => l.id === doc.lane)?.label).toBe('Accounting');
+      expect(r.diagnostics.filter(d => d.code === 'W-209' || d.code === 'W-105')).toEqual([]);
+      expect(stats.unsupportedCount).toBe(0);
+    }
+    const ambiguous = xml.replace('</laneSet>', '<lane id="other" name="Other"><flowNodeRef>otherWriter</flowNodeRef></lane></laneSet>')
+      .replace('<dataObjectReference', '<task id="otherWriter"><dataOutputAssociation id="da2"><targetRef>doc</targetRef></dataOutputAssociation></task><sequenceFlow id="f3" sourceRef="otherWriter" targetRef="e"/><dataObjectReference')
+      .replace('id="f2" sourceRef="write" targetRef="e"', 'id="f2" sourceRef="write" targetRef="otherWriter"');
+    const { flow, stats } = convert(ambiguous);
+    const uncertain = compile(flow, { strict: true }).normalized.nodes.find(n => n.label === 'Invoice')!;
+    expect(uncertain.provisional).toBe(true);
+    expect(stats.unsupported.some(item => item.tag === 'laneAssignment')).toBe(true);
+  });
+
   it('catch / throw / default / condition / call を保持する', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <definitions ${NS} xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -155,12 +184,23 @@ describe('BPMN XML → DSL → SVG', () => {
     <sequenceFlow id="f2" sourceRef="t" targetRef="e"/>
   </process>
 </definitions>`;
-    const { stats } = convert(xml);
+    const { flow, stats } = convert(xml);
     expect(stats.supportedCount).toBeGreaterThan(0);
     expect(stats.supportedCount + stats.unsupportedCount).toBeGreaterThan(stats.supportedCount - 1);
     expect(new Set(stats.supported.map((s) => s.tag))).toEqual(new Set([
       'process-lane', 'startEvent', 'task', 'endEvent', 'sequenceFlow', 'sequenceFlow',
     ].slice(0, 5)));
+    const r = compile(flow, { strict: true });
+    expect(r.normalized.id).toBe('p');
+    expect(compile(convert(xml.replace('name="P"', 'name="Renamed"')).flow).normalized.id).toBe('p');
+    const dir = mkdtempSync(join(tmpdir(), 'process-model-generator-converted-delivery-'));
+    writeFileSync(join(dir, 'p.flow'), flow);
+    writeFileSync(join(dir, 'p.svg'), r.svg);
+    const entry = r.normalized.nodes.find(n => n.kind === 'start')!.id;
+    const exit = r.normalized.nodes.find(n => n.kind === 'end')!.id;
+    const reportPath = join(dir, 'review.md');
+    writeFileSync(reportPath, `| claim | kind | view:id | status | reason |\n|---|---|---|---|---|\n| view-index | view | p:* | modeled | entry=${entry}; exits=${exit} |`);
+    expect(evaluateDelivery({ directory: dir, reportPath }).findings).toEqual([]);
   });
 
   it('改行を含む出典をコメント内に留め、トポロジを変えない', () => {

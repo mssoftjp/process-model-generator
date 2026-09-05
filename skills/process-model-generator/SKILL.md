@@ -30,9 +30,12 @@ When translating evidence into `.flow`:
 - Use object-plus-verb task labels, one question per diverging gateway, triggers for starts, results for ends, and payload names for messages. Do not invent wording where meaning is unknown.
 - Preserve manual preparation, attachment, receipt, transfer, conversion, filing, acknowledgement, and similar work when it changes responsibility, delay, evidence, control, channel, system, or artifact state.
 - Use `doc` for a process-instance artifact and `store` for persistent shared information. A record is not sequence flow unless it is a real prerequisite.
+- Use lanes only for responsible business roles; represent repositories and systems such as shared drives as `store`. Keep complete document lifecycles in one detailed diagram by default, with native-size scrolling and zoom; do not split or omit work because of canvas dimensions.
+- Trace every material document or data item through the supported lifecycle: originator or sender, receiving activity and responsible lane, subsequent use, and filing activity plus `store` when retention is in scope. Put those handoffs on the actual path; a `doc`, `store`, label, or note by itself does not show that anyone received or retained it. Keep an unavailable actor, channel, or retention destination unresolved instead of inventing one.
+- Data-association direction is data direction: `task -.-> doc` creates or updates it, `doc -.-> task` reads or uses it, `task -.-> store` writes it, and `store -.-> task` reads it. For a pool boundary, connect real send and receive activities with a payload-labeled `~>`, then declare and associate the receiving participant's own `doc` or `store`; never carry one Data Object across participants.
 - Decompose by supported business outcome, handoff, reusable subprocess, trigger, time boundary, or material variant; never by node count or to hide uncertainty.
 
-Before compiling, reconcile every material actor, handoff, decision, condition, optional step, artifact role, exception, external reply, and time deferral against the actual node and edge paths. Use `claim | kind | view:id | status | reason`, with status `modeled`, `?`, `excluded`, or `unresolved`; the consulting workflow defines the source-bearing form. A label or note alone is not topology evidence.
+Before compiling, reconcile every material actor, handoff, decision, condition, optional step, artifact origin, receiver, use, retention destination, exception, external reply, and time deferral against the actual node and edge paths. Use `claim | kind | view:id | status | reason`, with status `modeled`, `?`, `excluded`, or `unresolved`; the consulting workflow defines the source-bearing form. A label or note alone is not topology evidence.
 
 Read [the source notes](references/translation-sources.md) only when auditing or changing these translation rules.
 
@@ -45,7 +48,7 @@ Preserve stable IDs after topology is supported. Use the common subset:
 - Keep sequence flow inside one pool, message flow across pools, and documents off sequence flow. Use `orientation vertical` only to choose presentation; it must not change topology or IDs.
 - On a diverging gateway, mark a normal branch with `=>` only when evidence supports one. Declaration order must not imply a business preference.
 
-Read [the advanced DSL and delivery reference](references/dsl-advanced.md) for advanced notation, BPMN XML conversion, detailed diagnostics, or multi-view delivery. Convert BPMN XML with `scripts/bpmn2flow.py`; do not transcribe it by eye or count dropped meaning as supported.
+Read [the advanced DSL and delivery reference](references/dsl-advanced.md) for advanced notation, BPMN XML conversion, detailed diagnostics, or multi-view delivery. For a complete XML diagram, pass the `.bpmn` directly to the bundled compiler; it retains nested scopes and extension information in one detailed SVG. Use `scripts/bpmn2flow.py` for a single-scope DSL conversion; do not transcribe XML by eye or count dropped meaning as supported.
 
 Compile a candidate strictly:
 
@@ -59,6 +62,6 @@ Strict compilation proves syntax and selected invariants, not business truth or 
 
 For a delivery directory, run the `eval` command and ledger rules in [the advanced DSL and delivery reference](references/dsl-advanced.md); use the consulting workflow's `--consulting` form when applicable. Treat a nonzero result as incomplete. When ownership matters, also compile with `--emit-normalized` and verify each `doc` and `store` lane.
 
-Report the `.flow` and `.svg` paths, modeled start and end, material questions and answers, intentional exclusions, unresolved relationships, compiler result, and any required pan or zoom. A `W-440` delivery needs a readable overview plus supported detail views; `W-441` is unreadable at the target scale and becomes `E-441` under `--strict`.
+Report the `.flow` and `.svg` paths, modeled start and end, material questions and answers, intentional exclusions, unresolved relationships, compiler result, and any required pan or zoom. Default to one complete detailed SVG. `W-440` and `W-441` warn against fit-to-screen shrinking; retain native-size scrolling and zoom, including in strict mode. Split into separate views only when explicitly requested or required by distinct business scopes, never automatically by canvas size.
 
 Before changing compiler or rendering code, read [the engine maintenance contract](references/engine-maintenance.md), then run `npm test`.
