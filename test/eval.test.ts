@@ -413,6 +413,29 @@ as -> ae`;
 });
 
 describe('snapshot comparison script', () => {
+  it('入力の縦指定を上書きし、縦横を別々に測定する', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'process-model-generator-snapshot-'));
+    try {
+      writeFileSync(join(dir, 'sample.flow'), 'orientation vertical\nlane office\nstart s\ntask a[Work]\nend e\ns -> a\na -> e\n');
+      const snapshots = [];
+      for (const vertical of [false, true]) {
+        const out = join(dir, vertical ? 'v' : 'h');
+        const result = spawnSync(process.execPath, [
+          '--import', 'tsx', fileURLToPath(new URL('../scripts/eval/snapshot.mts', import.meta.url)),
+          out, dir, ...(vertical ? ['--vertical'] : []),
+        ], { encoding: 'utf8' });
+        expect(result.status, result.stderr).toBe(0);
+        const metrics = JSON.parse(readFileSync(join(out, 'metrics.json'), 'utf8'));
+        expect(metrics.failed).toBe(0);
+        expect(metrics.rows[0].visual.groups.seq.ratioMax).toBe(1);
+        snapshots.push(readFileSync(join(out, 'sample.svg'), 'utf8'));
+      }
+      expect(snapshots[0]).not.toBe(snapshots[1]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('片側だけにある図を報告して失敗する', () => {
     const dir = mkdtempSync(join(tmpdir(), 'process-model-generator-compare-'));
     const row = { name: 'shared', bends: 0, hops: 0, uturn: 0, excess: 0, oracle: 0, area: 1, length: 1 };

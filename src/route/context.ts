@@ -136,7 +136,7 @@ export function railClear(ctx: Ctx, col: number, a: number, b: number): boolean 
 }
 
 /** 列 col の中心線を、通し縦位置 a..b の間(両端は含まない)で垂直に通れるか */
-function columnClear(ctx: Ctx, col: number, a: number, b: number): boolean {
+export function columnClear(ctx: Ctx, col: number, a: number, b: number): boolean {
   const [lo, hi] = a < b ? [a, b] : [b, a];
   for (const r of ctx.rows) {
     if (r.pos <= lo || r.pos >= hi) continue;

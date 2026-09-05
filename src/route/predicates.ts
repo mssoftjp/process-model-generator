@@ -4,7 +4,7 @@ import { isEventKind, isGatewayKind } from '../bpmn.ts';
 import type {
   NormEdge, NormNode, PortSide, SymY,
 } from '../types.ts';
-import { rowKey } from './context.ts';
+import { rowKey, columnClear } from './context.ts';
 import type { Ctx, Cell } from './context.ts';
 import { portY, nodeCY } from './symbols.ts';
 
@@ -18,6 +18,16 @@ export const needsBottomMessagePort = (ctx: Ctx, id: string) =>
 
 export const blackboxLane = (ctx: Ctx, pool: string) =>
   ctx.g.lanes.find((lane) => lane.pool === pool && lane.blackbox)?.id;
+
+/** A black-box message cannot take the bottom port through an occupied column. */
+function poolMessageCanLeaveBottom(ctx: Ctx, e: NormEdge): boolean {
+  const source = ctx.nodeById.get(e.from);
+  const lane = e.toPool && blackboxLane(ctx, e.toPool);
+  if (!source || !lane || !bottomFree(source)) return false;
+  const start = ctx.globalRow.get(rowKey(source.lane, ctx.p.row.get(source.id)!))!;
+  const end = ctx.globalRow.get(rowKey(lane, 0))!;
+  return end > start && columnClear(ctx, ctx.p.col.get(source.id)!, start, end);
+}
 
 /** 下ポートを使ってよいか: 下置きラベルのあるイベント類は不可(ラベル動線と衝突。C-65) */
 export const bottomFree = (n: NormNode) =>
@@ -89,6 +99,7 @@ export function faceQuiet(
   return !ctx.g.edges.some((o) => {
     if (o.id === e.id || o.id === ignore || (o.from !== nodeId && o.to !== nodeId)) return false;
     if (skip?.(o)) return false;
+    if (face === 'bottom' && o.from === nodeId && o.toPool && !poolMessageCanLeaveBottom(ctx, o)) return false;
     const done = ctx.planned.get(o.id);
     if (done) {
       return (o.from === nodeId && done.fromSide === face) || (o.to === nodeId && done.toSide === face);
@@ -166,7 +177,7 @@ export function noDownwardOut(ctx: Ctx, v: Cell, vRowPos: number): boolean {
     if (e2.toPool) {
       const lane = blackboxLane(ctx, e2.toPool);
       const bandPos = lane === undefined ? undefined : ctx.globalRow.get(rowKey(lane, 0));
-      if (bandPos !== undefined && bandPos > vRowPos) return false;
+      if (bandPos !== undefined && bandPos > vRowPos && poolMessageCanLeaveBottom(ctx, e2)) return false;
       continue;
     }
     const t = ctx.nodeById.get(e2.to);
@@ -184,7 +195,7 @@ export function bottomOutFree(ctx: Ctx, v: Cell, vRowPos: number): boolean {
     if (e2.toPool) {
       const lane = blackboxLane(ctx, e2.toPool);
       const bandPos = lane === undefined ? undefined : ctx.globalRow.get(rowKey(lane, 0));
-      if (bandPos !== undefined && bandPos > vRowPos) return false;
+      if (bandPos !== undefined && bandPos > vRowPos && poolMessageCanLeaveBottom(ctx, e2)) return false;
       continue;
     }
     const t = ctx.nodeById.get(e2.to);

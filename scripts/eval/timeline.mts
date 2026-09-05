@@ -9,6 +9,7 @@
 // natural size and aligned top-left, so growth shows as B running past A.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { visualMetrics } from './visual-metrics.mts';
 
 const [out, ...specs] = process.argv.slice(2);
 if (!out || specs.length < 2) {
@@ -30,10 +31,10 @@ const intern = (s: string) => {
   if (i === undefined) { i = svgs.length; svgs.push(s); index.set(s, i); }
   return i;
 };
-type Stat = { bends: number; hops: number; area: number };
+type Stat = { bends: number; hops: number; area: number; ratio?: number | null; excursion?: number };
 const metricsOf = (dir: string) => {
   const m = JSON.parse(readFileSync(join(dir, 'metrics.json'), 'utf8'));
-  return new Map<string, Stat & { error?: string }>(m.rows.map((r: any) => [r.name, r]));
+  return new Map<string, Stat & { error?: string; visual?: ReturnType<typeof visualMetrics> }>(m.rows.map((r: any) => [r.name, r]));
 };
 const names = readdirSync(versions[0]!.dir).filter((f) => f.endsWith('.svg')).map((f) => f.slice(0, -4)).sort();
 const metrics = new Map(versions.map((v) => [v.id, metricsOf(v.dir)]));
@@ -46,11 +47,11 @@ const figures = names.map((name) => {
   for (const v of versions) {
     byVersion[v.id] = intern(readFileSync(join(v.dir, name + '.svg'), 'utf8'));
     const r = metrics.get(v.id)!.get(name)!;
-    stats[v.id] = { bends: r.bends, hops: r.hops, area: r.area };
+    stats[v.id] = { bends: r.bends, hops: r.hops, area: r.area, ratio: r.visual?.groups.assoc?.ratioMax, excursion: r.visual?.groups.assoc?.excursionMax };
     if (hasVertical) {
       vByVersion[v.id] = intern(readFileSync(join(v.vdir!, name + '.svg'), 'utf8'));
       const vr = vmetrics!.get(v.id)!.get(name)!;
-      vstats[v.id] = { bends: vr.bends, hops: vr.hops, area: vr.area };
+      vstats[v.id] = { bends: vr.bends, hops: vr.hops, area: vr.area, ratio: vr.visual?.groups.assoc?.ratioMax, excursion: vr.visual?.groups.assoc?.excursionMax };
     }
   }
   const title = svgs[byVersion[versions[0]!.id]!]!.match(/<title>([^<]*)<\/title>/)?.[1] ?? name;
@@ -264,7 +265,8 @@ input[type=range]{accent-color:var(--focus);width:140px}
     const ar = Math.round(100 * st[state.b].area / st[state.a].area - 100);
     $('stats').innerHTML = '<span><b>' + f.title + '</b></span>'
       + '<span>A <b>' + vLabel(state.a) + '</b></span><span>B <b>' + vLabel(state.b) + '</b></span>'
-      + row('crossings', 'hops') + row('bends', 'bends')
+      + row('hops', 'hops') + row('bends', 'bends')
+      + (st[state.a].ratio != null && st[state.b].ratio != null ? row('assoc max length / distance', 'ratio') + row('assoc excursion px', 'excursion') : '')
       + '<span class="' + (ar > 0 ? 'worse' : ar < 0 ? 'better' : '') + '">area <b class="mono">' + (ar > 0 ? '+' : '') + ar + '%</b></span>'
       + (svgA === svgB ? '<span>identical SVG</span>' : '');
   }

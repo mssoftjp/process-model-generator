@@ -48,3 +48,39 @@ business models; this benchmark tests the implementation itself.
 or an empty corpus. Its totals only describe successfully compiled figures: inspect
 `failed` and the error rows before comparing totals. These geometry metrics are
 supporting evidence, never a replacement for the benchmark or visual review.
+
+## Fixed-evaluator historical comparisons
+
+`snapshot.mts` measures every compiler's returned geometry with the **current**
+`crossing-causes.ts` and `visual-metrics.mts`, without rerouting old results.
+Both orientations are forced (horizontal by default, `--vertical` for vertical),
+so an orientation declaration inside a fixture cannot silently duplicate a view.
+Archive `src` **and** `package.json` inside this repository's ignored output tree
+so historical modules retain their module type and resolve installed dependencies.
+
+For the 2026-09-05 review, freeze all 20 local `inputs/flow/*.flow` files plus
+`test/fixtures/benchmark/scenarios/invoice.flow` renamed to `invoice-send.flow`.
+The latter is a separate regression cohort, excluded from the legacy totals.
+Run snapshots at `cff50af`, `9c66f5a`, `e942239`, `720a652`, `4c7aa79`,
+`4a50eca` and the current working tree, in both orientations. Use `timeline.mts`
+with all seven horizontal/vertical directory pairs. Record full commit IDs,
+input/evaluator SHA-256 hashes and the working-tree source patch alongside the
+snapshots; generated local evidence lives in `outputs/layout-history/`.
+Never compare success-only totals if any version has failed cases.
+
+The new per-edge `visual` diagnostics include direction-change bends (ignoring
+redundant collinear waypoints), Manhattan route length / endpoint distance, and
+maximum excursion outside the endpoint rectangle in pixels. Coincident endpoints
+have a null ratio. Summaries separate sequence, message and association edges from
+intentional return edges. Ratio 1 and excursion 0 mean monotone routing, **not**
+proof of an optimal route or readable layout; necessary obstacle avoidance may
+increase either. The timeline exposes association ratio/excursion alongside the
+existing bend and hop counts. Hops are display jumps, not all geometric crossings;
+`crossings` in metrics.json counts proper segment intersections separately.
+
+These diagnostics complement the independent oracle and actual rendered review.
+[bpmn-io's quality evaluation](https://github.com/bpmn-io/bpmn-auto-layout/blob/main/test/README.md)
+likewise separates structural defects from bend/length/compactness signals.
+[User-created graph drawing research](https://pubmed.ncbi.nlm.nih.gov/21173454/)
+supports attention to crossings and alignment; it does not validate a weighted
+score or a numeric perceptual acceptance threshold for this corpus.

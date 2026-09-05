@@ -9,6 +9,7 @@ __pycache__/
 /outputs/
 /scratch/
 /dist/
+/inputs/
 coverage/
 .cache/
 .tmp/
@@ -66,8 +67,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Source inputs and repository documentation are intentionally visible to Git.
-# Add machine-specific exclusions to .git/info/exclude instead of hiding them here.
+# Local source corpora stay private; publish reviewed examples under test/fixtures/.
+# Add other machine-specific exclusions to .git/info/exclude.
 
 # Repository documentation is public even when /docs/ is excluded locally.
 !/docs/

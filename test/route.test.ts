@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { compile, parse } from '../src/compile.ts';
 import { normalize } from '../src/normalize.ts';
 import { place } from '../src/place.ts';
@@ -10,6 +11,16 @@ import type { EdgeGeom } from '../src/types.ts';
 import { BRANCH_FLOW, IMPLICIT_JOIN_FLOW, COLLABORATION_FLOW, VERTICAL_MESSAGE_LABEL_FLOW, noOracleViolations } from './helpers.ts';
 
 describe('分岐と出口の視覚文法', () => {
+  it('文書で塞がれた送信面を予約せず、入力関連を直結する（縦・横）', () => {
+    const source = readFileSync('test/fixtures/benchmark/scenarios/invoice.flow', 'utf8');
+    for (const orientation of ['horizontal', 'vertical']) {
+      const r = noOracleViolations(`orientation ${orientation}\n${source}`);
+      const input = r.geometry.edges.find(e => e.from === 'invoice' && e.to === 'send')!;
+      expect(input.points).toHaveLength(2);
+      expect(r.geometry.edges.filter(e => e.kind === 'msg')).toHaveLength(1);
+      expect(inspectEdgeLabels(r.geometry)).toMatchObject({ nodeHits: 0, edgeHits: 0, labelHits: 0 });
+    }
+  });
   it('同列の文書・保管先出力は手前のノードを短い側面経路で避ける', () => {
     const r = noOracleViolations(`lane accounting
 task write[記録する]

@@ -3,12 +3,14 @@
 //   npx tsx scripts/eval/snapshot.mts <outDir> <corpus.txt | dir> [--vertical] [--src <srcRoot>]
 //
 // corpus.txt lists .flow paths one per line; a directory is scanned for *.flow.
-// --vertical prepends `orientation vertical` (replacing any orientation line).
+// Both modes replace the input orientation: horizontal by default, vertical with --vertical.
 // --src points at a checkout of src/ from another commit, so the same corpus can be
 // snapshotted at several points in history and compared with compare.mts / timeline.mts.
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { diagnoseCrossingCauses } from '../../src/crossing-causes.ts';
+import { visualMetrics } from './visual-metrics.mts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); if (i < 0) return undefined; return args.splice(i, 2)[1]; };
@@ -25,7 +27,7 @@ const files = statSync(corpus).isDirectory()
   : readFileSync(corpus, 'utf8').split('\n').filter(Boolean);
 
 const { compile } = await import(join(srcRoot, 'compile.ts'));
-const { recoverSelectedRoute, diagnoseCrossingCauses } = await import(join(srcRoot, 'crossing-causes.ts'));
+// Use one evaluator for every historical compiler; never reroute old geometry.
 mkdirSync(outDir, { recursive: true });
 
 const rows: Record<string, unknown>[] = [];
@@ -33,13 +35,13 @@ let failed = 0;
 const total = { edges: 0, bends: 0, hops: 0, oracle: 0, length: 0, area: 0, uturn: 0, excess: 0, patterns: {} as Record<string, number> };
 for (const f of files) {
   let src = readFileSync(f, 'utf8');
-  if (vertical) src = 'orientation vertical\n' + src.split('\n').filter((l) => !/^\s*orientation\b/.test(l)).join('\n');
+  src = `orientation ${vertical ? 'vertical' : 'horizontal'}\n` + src.split('\n').filter((l) => !/^\s*orientation\b/.test(l)).join('\n');
   const name = basename(f, '.flow');
   let r;
   try { r = compile(src, { strict: true }); } catch (e) { failed++; rows.push({ name, error: String(e) }); continue; }
   writeFileSync(join(outDir, `${name}.svg`), r.svg);
-  const plan = recoverSelectedRoute(r);
-  const planById = new Map(plan.plans.map((p: { edgeId: string }) => [p.edgeId, p]));
+  const plan = r.plan;
+  const planById = new Map((plan?.plans ?? []).map((p: { edgeId: string }) => [p.edgeId, p]));
   const rep = diagnoseCrossingCauses(r.geometry, plan);
   const patterns: Record<string, number> = {};
   for (const e of r.geometry.edges) {
@@ -47,7 +49,7 @@ for (const f of files) {
     patterns[pat] = (patterns[pat] ?? 0) + 1;
   }
   const oracle = r.diagnostics.filter((d: { code: string }) => d.code.startsWith('O-')).length;
-  const row = { name, edges: r.geometry.edges.length, bends: rep.bends, hops: rep.hops, oracle, uturn: rep.detourEdges, excess: rep.excessBends, length: rep.length, area: rep.area, patterns };
+  const row = { name, edges: r.geometry.edges.length, bends: rep.bends, hops: rep.hops, oracle, uturn: rep.detourEdges, excess: rep.excessBends, length: rep.length, area: rep.area, patterns, crossings: rep.rawIntersections, visual: visualMetrics(r.geometry) };
   rows.push(row);
   total.edges += row.edges; total.bends += row.bends; total.hops += row.hops; total.oracle += oracle;
   total.length += row.length; total.area += row.area; total.uturn += row.uturn; total.excess += row.excess;

@@ -24,6 +24,7 @@ const SKILL_FILES = [
   'references/translation-sources.md',
   'references/consulting-workflow.md',
   'scripts/bpmn2flow.py',
+  'scripts/bpmn-detail.py',
   'scripts/process-model-generator.mjs',
 ];
 

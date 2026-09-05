@@ -28,17 +28,17 @@
     "emphasis": "Both approval tasks have equal dimensions and neutral strokes."
   },
   "invoice-horizontal": {
-    "svgHash": "0fd7eccf04c68ff7dfd47c5bff843e5f502a86cc3ea1d98bf114d2c1c2e41ecd",
+    "svgHash": "7dc33aa1c2377b791a2d4e49a70995c8645c48eed45084c03e9a2424f5aebb02",
     "verdict": "PASS",
     "traceability": "Write produces Invoice, Send consumes it, and the message reaches the black-box Supplier.",
-    "readability": "Document and task labels are legible; crossed association and message routes require attention.",
+    "readability": "Invoice feeds Send through a straight association. The write association enters the other face, and the blue Supplier message uses a separate side corridor; both orientations inspected at native size.",
     "emphasis": "Document remains in Accounting; no inferred preferred branch is emphasized."
   },
   "invoice-vertical": {
-    "svgHash": "17df703898117b10bc87448fad8074bce2a1ab895d65b7cf4d30819de4e3e68a",
+    "svgHash": "7913b9f10a0fcd2c3f6c56cc3dbfa4d1f4abea574c597cc8fd1e8ed14b9f69f9",
     "verdict": "PASS",
     "traceability": "Write produces Invoice, Send consumes it, and the message reaches the black-box Supplier.",
-    "readability": "Document and task labels are legible; crossed association and message routes require attention.",
+    "readability": "Invoice feeds Send through a straight association. The write association enters the other face, and the blue Supplier message uses a separate side corridor; both orientations inspected at native size.",
     "emphasis": "Document remains in Accounting; no inferred preferred branch is emphasized."
   },
   "starter-horizontal": {

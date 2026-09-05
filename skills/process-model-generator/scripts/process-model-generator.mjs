@@ -2612,6 +2612,14 @@ var isGw = (n) => isGatewayKind(n.kind);
 var hasSequenceOut = (ctx, id) => ctx.g.edges.some((e) => e.from === id && e.kind === "seq");
 var needsBottomMessagePort = (ctx, id) => hasSequenceOut(ctx, id) && ctx.g.edges.some((e) => e.from === id && e.kind === "msg" && !e.toPool);
 var blackboxLane = (ctx, pool) => ctx.g.lanes.find((lane) => lane.pool === pool && lane.blackbox)?.id;
+function poolMessageCanLeaveBottom(ctx, e) {
+  const source = ctx.nodeById.get(e.from);
+  const lane = e.toPool && blackboxLane(ctx, e.toPool);
+  if (!source || !lane || !bottomFree(source)) return false;
+  const start = ctx.globalRow.get(rowKey(source.lane, ctx.p.row.get(source.id)));
+  const end = ctx.globalRow.get(rowKey(lane, 0));
+  return end > start && columnClear(ctx, ctx.p.col.get(source.id), start, end);
+}
 var bottomFree = (n) => !(isEventKind(n.kind) && n.label !== "");
 function poolMessageFacesBottom(ctx, nodeId) {
   const ni = ctx.pools.indexOfNode(nodeId);
@@ -2657,6 +2665,7 @@ function faceQuiet(ctx, nodeId, face, e, ignore, skip) {
   return !ctx.g.edges.some((o) => {
     if (o.id === e.id || o.id === ignore || o.from !== nodeId && o.to !== nodeId) return false;
     if (skip?.(o)) return false;
+    if (face === "bottom" && o.from === nodeId && o.toPool && !poolMessageCanLeaveBottom(ctx, o)) return false;
     const done = ctx.planned.get(o.id);
     if (done) {
       return o.from === nodeId && done.fromSide === face || o.to === nodeId && done.toSide === face;
@@ -2716,7 +2725,7 @@ function noDownwardOut(ctx, v, vRowPos) {
     if (e2.toPool) {
       const lane = blackboxLane(ctx, e2.toPool);
       const bandPos = lane === void 0 ? void 0 : ctx.globalRow.get(rowKey(lane, 0));
-      if (bandPos !== void 0 && bandPos > vRowPos) return false;
+      if (bandPos !== void 0 && bandPos > vRowPos && poolMessageCanLeaveBottom(ctx, e2)) return false;
       continue;
     }
     const t = ctx.nodeById.get(e2.to);
@@ -2732,7 +2741,7 @@ function bottomOutFree(ctx, v, vRowPos) {
     if (e2.toPool) {
       const lane = blackboxLane(ctx, e2.toPool);
       const bandPos = lane === void 0 ? void 0 : ctx.globalRow.get(rowKey(lane, 0));
-      if (bandPos !== void 0 && bandPos > vRowPos) return false;
+      if (bandPos !== void 0 && bandPos > vRowPos && poolMessageCanLeaveBottom(ctx, e2)) return false;
       continue;
     }
     const t = ctx.nodeById.get(e2.to);
@@ -7765,7 +7774,7 @@ if (process.stderr.isTTY) {
 }
 var args = process.argv.slice(2);
 if (args.includes("--version")) {
-  print(process.stdout, "0.2.20");
+  print(process.stdout, "0.2.21");
   process.exit(0);
 }
 if (args[0] === "eval") {
@@ -7786,7 +7795,7 @@ if (args[0] === "eval") {
     reportPath,
     parentId,
     consulting,
-    version: "0.2.20"
+    version: "0.2.21"
   });
   for (const finding of result.findings) {
     const tag = finding.level === "error" ? "ERROR" : finding.level === "warning" ? "WARN " : "info ";
@@ -7812,7 +7821,7 @@ try {
     const directory = mkdtempSync(tmpdir() + "/bpmn-detail-");
     try {
       execFileSync("python3", [fileURLToPath(new URL("./bpmn-detail.py", import.meta.url)), input, directory, input]);
-      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.20");
+      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.21");
       if (output) {
         mkdirSync(dirname(output), { recursive: true });
         writeFileSync(output, result2.svg);
@@ -7828,7 +7837,7 @@ try {
   const result = compile(source, {
     strict,
     orientation: verticalDefault ? "vertical" : void 0,
-    version: "0.2.20"
+    version: "0.2.21"
   });
   for (const d of result.diagnostics) {
     const tag = d.level === "error" ? "ERROR" : d.level === "warning" ? "WARN " : "info ";

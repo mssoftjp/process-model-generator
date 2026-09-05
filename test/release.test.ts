@@ -1,6 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   checkVersionSync,
@@ -17,6 +19,29 @@ const SKILL_ARCHIVE = `process-model-generator-skill-${VERSION}.zip`;
 const PLUGIN_ARCHIVE = `process-model-generator-plugin-${VERSION}.zip`;
 
 describe('release packaging', () => {
+  it('runs complete BPMN output from both extracted archives without repository dependencies', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'process-model-generator-unpacked-'));
+    try {
+      for (const [name, bytes] of releaseArchives()) {
+        const root = join(directory, name);
+        for (const [path, data] of readZipEntries(bytes)) {
+          const target = join(root, path);
+          mkdirSync(dirname(target), { recursive: true });
+          writeFileSync(target, data);
+        }
+        const skill = name === SKILL_ARCHIVE ? root : join(root, 'skills/process-model-generator');
+        const output = join(root, 'nested.svg');
+        execFileSync(process.execPath, [join(skill, 'scripts/process-model-generator.mjs'),
+          fileURLToPath(new URL('test/fixtures/benchmark/upstream/nested.bpmn', ROOT)),
+          '--strict', '-o', output], { cwd: root, stdio: 'pipe' });
+        const svg = readFileSync(output, 'utf8');
+        expect(svg).toContain('Error caught');
+        expect(svg).toContain('<svg');
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
   it('keeps every release metadata file synchronized', () => {
     expect(checkVersionSync()).toBe(VERSION);
   });
