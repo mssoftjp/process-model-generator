@@ -395,9 +395,11 @@ def main(src, dst, source_url, stats_json=None):
             cond = sf.find(f'{B}conditionExpression')
             is_def = sf.get('id') in defaults
             label = clean(sf.get('name'))
-            if cond is not None and not label:
-                label = clean(''.join(cond.itertext())) or '条件'
-            edges.append(('seq', sid, tid, label, False, is_def, None))
+            edge_text = label
+            if cond is not None:
+                condition = clean(''.join(cond.itertext())) or '条件'
+                edge_text = f'[if {json.dumps(condition, ensure_ascii=False)}] {label}'.rstrip()
+            edges.append(('seq', sid, tid, edge_text, False, is_def, None))
             add_sup('sequenceFlow', sf.get('id'), label)
         for el in proc:
             tag = local(el.tag)

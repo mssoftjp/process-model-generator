@@ -1,0 +1,86 @@
+flow expense_settlement[経費精算 業務フロー（画像からの想定As-Is）]
+orientation vertical
+
+pool company[社内]
+
+lane applicant[申請者（営業担当）]
+  start expense_occurs[経費が発生]
+  task prepare_application[申請内容を入力]
+  task scan_receipt[領収書をスキャンしPDF化]
+  task submit_application[申請を送信]
+  xor handle_return[差戻しに対応する？]
+  task revise_application[申請内容・証憑を修正]
+  end withdrawn[取下げ・終了]
+  task mail_originals[領収書原本を郵送]
+  task confirm_payment[入金を確認]
+  end settlement_complete[経費精算完了]
+  doc application[経費申請データ]
+  doc receipt_pdf[領収書PDF]
+
+lane supervisor[直属上長]
+  task review_supervisor[申請内容と証憑を確認]
+  xor supervisor_approval[承認する？]
+  task notify_supervisor_return[差戻し理由を通知]
+  xor amount_threshold[10万円以上？]
+
+lane department_head[部長]
+  task review_additional[追加承認審査]
+  xor department_approval[承認する？]
+  task notify_department_return[差戻し理由を通知]
+
+lane accounting[経理]
+  task receive_approval_notice[承認通知メールを受信]
+  task inspect_evidence[申請内容・領収書を確認]
+  xor evidence_defect[不備がある？]
+  task request_correction[申請者へ修正を依頼]
+  and parallel_processing[精算と原本管理を並行する]
+  task register_payment[精算データを登録]
+  task execute_transfer[振込処理を実行]
+  task notify_transfer[振込完了を通知]
+
+lane general_affairs[総務]
+  task receive_originals[領収書原本を受領]
+  task file_originals[領収書原本を保管]
+  and completion_join[精算・原本管理の完了を確認]
+  store receipt_archive[領収書原本保管]
+
+expense_occurs -> prepare_application
+prepare_application -> scan_receipt
+scan_receipt -> submit_application
+submit_application -> review_supervisor
+review_supervisor -> supervisor_approval
+supervisor_approval -> amount_threshold : 承認
+supervisor_approval -> notify_supervisor_return : 否認・差戻し
+notify_supervisor_return -> handle_return
+handle_return -> revise_application : 修正する
+handle_return -> withdrawn : 取り下げる
+revise_application ->> submit_application : 再申請
+amount_threshold -> review_additional : 10万円以上
+amount_threshold -> receive_approval_notice : 10万円未満
+review_additional -> department_approval
+department_approval -> receive_approval_notice : 承認
+department_approval -> notify_department_return : 否認・差戻し
+notify_department_return -> handle_return
+receive_approval_notice -> inspect_evidence
+inspect_evidence -> evidence_defect
+evidence_defect -> request_correction : 不備あり
+evidence_defect -> parallel_processing : 不備なし
+request_correction -> handle_return
+parallel_processing -> register_payment : 精算処理
+parallel_processing -> mail_originals : 原本管理
+register_payment -> execute_transfer
+execute_transfer -> notify_transfer
+notify_transfer -> confirm_payment
+mail_originals -> receive_originals
+receive_originals -> file_originals
+file_originals -> completion_join
+confirm_payment -> completion_join
+completion_join -> settlement_complete
+
+prepare_application -.-> application
+scan_receipt -.-> receipt_pdf
+application -.-> review_supervisor
+receipt_pdf -.-> review_supervisor
+application -.-> inspect_evidence
+receipt_pdf -.-> inspect_evidence
+file_originals -.-> receipt_archive

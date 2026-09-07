@@ -268,6 +268,7 @@ export function normalize(ir: Ir, strict = false): NormGraph {
     let cur = first;
     const visited = new Set<string>();
     const path: string[] = [];
+    const choices: string[] = [];
     while (!visited.has(cur.id)) {
       visited.add(cur.id);
       path.push(cur.id);
@@ -283,11 +284,12 @@ export function normalize(ir: Ir, strict = false): NormGraph {
         candidates.find((e) => nodeById.get(e.to)?.lane === cur.lane) ??
         candidates[0]!;
       chosen.onSpine = true;
+      if (outs.length > 1) choices.push(`${cur.id}->${chosen.to}=${chosen.mainHint ? 'explicit-hint' : chosen.label === undefined ? 'unlabeled' : nodeById.get(chosen.to)?.lane === cur.lane ? 'same-lane' : 'declaration-order'}`);
       cur = nodeById.get(chosen.to)!;
     }
     report.push({
       level: 'info', code: 'N-222',
-      message: `本流を選挙(${pool || 'default'}): ${path.join(' -> ')}`,
+      message: `描画用骨格を選択(${pool || 'default'}): ${path.join(' -> ')}; reasons=${choices.join(',') || 'single-path'}; 自動選択は業務上の通常経路・成功結果を保証しない`,
     });
   }
 

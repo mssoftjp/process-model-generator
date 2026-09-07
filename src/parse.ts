@@ -384,12 +384,24 @@ export function parse(source: string): ParseResult {
     ensureLane('？', '？', 0);
   }
 
-  // 非ゲートウェイ起点の条件ラベルは Conditional Sequence Flow（ミニ菱形）。
-  // ゲートウェイの条件はラベルのみ。Default Flow とは独立。
+  // 表示名から成立条件を推測しない。明示した条件だけが意味を持つ。
   for (const e of edges) {
-    if (e.kind !== 'seq' || !e.label) continue;
+    if (!e.label) continue;
+    const condition = /^\[if\s+("(?:[^"\\]|\\.)*"|[^\]]+)\]\s*(.*)$/u.exec(e.label);
+    if (condition && e.kind === 'seq') {
+      e.condition = condition[1]!.trim();
+      if (e.condition.startsWith('"')) {
+        try { e.condition = JSON.parse(e.condition) as string; }
+        catch { diags.push({ level: 'error', code: 'E-209', message: `${e.id}: 条件の引用文字列が不正` }); }
+      }
+      e.label = condition[2]!.trim() || e.condition;
+      e.isConditional = !isGatewayKind(nodeById.get(e.from)!.kind);
+      continue;
+    }
     const src = nodeById.get(e.from);
-    if (src && !isGatewayKind(src.kind)) e.isConditional = true;
+    if (e.kind === 'seq' && src && !isGatewayKind(src.kind)) {
+      diags.push({ level: 'info', code: 'N-208', message: `${e.from} -> ${e.to}: ラベルは表示名として扱う。成立条件なら : [if 条件] 表示名 を明示する` });
+    }
   }
 
   const ir: Ir = { id: flowId, title, orientation, pools, lanes, nodes, edges };

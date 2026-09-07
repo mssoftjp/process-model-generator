@@ -37,6 +37,8 @@ When translating evidence into `.flow`:
 
 Before compiling, reconcile every material actor, handoff, decision, condition, optional step, artifact origin, receiver, use, retention destination, exception, external reply, and time deferral against the actual node and edge paths. Use `claim | kind | view:id | status | reason`, with status `modeled`, `?`, `excluded`, or `unresolved`; the consulting workflow defines the source-bearing form. A label or note alone is not topology evidence.
 
+Distinguish faithful reconstruction from a user-requested hypothetical process. In reconstruction, leave unsupported synchronization and completion conditions unresolved. In a hypothetical model, identify adopted assumptions in both the diagram (provisional nodes/edges and explanatory labels) and the ledger; do not claim that assumptions are confirmed business facts. Reconcile incoming joins and completion prerequisites as well as outgoing branches. Delivery evaluation rejects in-scope `unknown-topology / unresolved` with `E-520`, even when a pass and matching SVG hash were recorded. An unknown genuinely outside the supported closed fragment may reference `view:*` with `scope=outside` and an explanation of the excluded relationship; never use this to waive an in-scope condition.
+
 Read [the source notes](references/translation-sources.md) only when auditing or changing these translation rules.
 
 ## Author `.flow`
@@ -59,6 +61,8 @@ node scripts/process-model-generator.mjs inputs/flow/process.flow -o outputs/pre
 ## Validate and deliver
 
 Strict compilation proves syntax and selected invariants, not business truth or visual quality. Reconcile diagnostics with the coverage ledger, then inspect the SVG: follow the main path, alternatives and rejoins; check responsibility boundaries, message corridors, artifact semantics, labels, ports, crossings, and every group of edges sharing a node. Do not hand-edit generated coordinates.
+
+Report strict compilation, evidence consistency, automated geometry checks, and visual inspection separately. `N-222` describes a drawing backbone and its selection reasons; same-lane preference or declaration order does not establish normal business outcomes. A matching SVG hash identifies the reviewed artifact, not the truth of the review.
 
 For a delivery directory, run the `eval` command and ledger rules in [the advanced DSL and delivery reference](references/dsl-advanced.md); use the consulting workflow's `--consulting` form when applicable. Treat a nonzero result as incomplete. When ownership matters, also compile with `--emit-normalized` and verify each `doc` and `store` lane.
 

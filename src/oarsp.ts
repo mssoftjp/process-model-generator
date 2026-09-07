@@ -582,7 +582,7 @@ function segmentCost(a: Pt, b: Pt, edge: EdgeGeom, others: EdgeGeom[]): Cost {
   return out;
 }
 
-function sharedPair(a: EdgeGeom, b: EdgeGeom): number {
+export function sharedPair(a: EdgeGeom, b: EdgeGeom): number {
   let n = 0;
   for (let i = 0; i + 1 < a.points.length; i++) for (let j = 0; j + 1 < b.points.length; j++) {
     n += overlap(a.points[i]!, a.points[i + 1]!, b.points[j]!, b.points[j + 1]!);

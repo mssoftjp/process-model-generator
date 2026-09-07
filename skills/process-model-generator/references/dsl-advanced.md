@@ -13,7 +13,7 @@ Read this reference only when the source requires constructs beyond the common s
 
 ## Edges and coverage
 
-- In addition to the common operators, use `-.-` for an undirected association, `..>` for a directed association, and `<..>` for a bidirectional association. A condition label on an Activity source is a conditional sequence flow.
+- In addition to the common operators, use `-.-` for an undirected association, `..>` for a directed association, and `<..>` for a bidirectional association. Edge text after `:` is a display label. Write `A -> B: [if approved] Send` to declare a condition independently of the display label; omitting `Send` displays the condition. Activity sources receive the conditional diamond; gateway sources retain their normal gateway notation. This also works with `->>` and `=>`. Migration: older activity labels implicitly produced a diamond; they now produce informational `N-208`. Add `[if ...]` only when the source establishes a real condition. BPMN XML conditions retain their existing meaning.
 - A default flow (`->/`) and a main-path hint (`=>`) are different concepts. Do not convert one into the other.
 - A return hint (`->>`) marks which sequence on a cycle is the layout feedback edge. It does not reverse the edge, change connectivity, or replace `=>`, `->/`, or `->?`. Unmarked cycles still use DFS back edges.
 - This compiler covers Process / Collaboration notation; it does not claim BPMN Process Modeling Conformance. Unsupported constructs include expanded Sub-Process nesting, BPMN Group containment, Choreography, Conversation, and message flows that land on a non-black-box pool border.

@@ -16,7 +16,8 @@ import { placeEdgeLabels } from './edge-labels.ts';
 import { checkOracle } from './oracle.ts';
 import { diagnosePageBudget } from './page-budget.ts';
 import { improveRouting } from './sift-order.ts';
-import { improveDataAssociations, visualAppearancePenalty } from './oarsp.ts';
+import { localSequenceCandidates } from './route/local-candidates.ts';
+import { improveDataAssociations, sharedPair, visualAppearancePenalty } from './oarsp.ts';
 import { renderSvg } from './svg.ts';
 import { isDocLike } from './types.ts';
 import type { CompileOptions, CompileResult, Diagnostic, Geometry, Orientation, RoutePlan } from './types.ts';
@@ -128,7 +129,28 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     const labelReport = placeEdgeLabels(oarspGeometry);
     consider(candidateOf('oarsp', { ...selected.assembled, geometry: oarspGeometry, labelReport }));
   }
+  // Bounded sweeps let port ordering and independent shortcuts improve one another.
+  for (let sweep = 0; sweep < 4; sweep++) {
+    const before = selected;
+    for (const geometry of localSequenceCandidates(before.geometry)) {
+      const introducesSharing = geometry.edges.some((a, i) => geometry.edges.slice(i + 1).some((b, j) =>
+        sharedPair(a, b) > sharedPair(before.geometry.edges[i]!, before.geometry.edges[i + 1 + j]!) + 0.01));
+      if (introducesSharing) continue;
+      const violations = checkOracle(normalized, geometry);
+      if (violations.length > 0) continue;
+      computeHops(geometry.edges);
+      const labelReport = placeEdgeLabels(geometry);
+      if (labelReport.nodeHits > selected.labelReport.nodeHits ||
+          labelReport.edgeHits > selected.labelReport.edgeHits ||
+          labelReport.labelHits > selected.labelReport.labelHits) continue;
+      consider(candidateOf('local-sequence', { ...selected.assembled, geometry, labelReport }));
+    }
+    if (before === selected) break;
+  }
   const geometry = selected.geometry;
+  if (adopted.has('local-sequence')) {
+    diags.push({ level: 'info', code: 'N-435', message: '全図検査により合流ポート交換・シーケンス短絡候補を採用' });
+  }
   const edges = geometry.edges;
   if (adopted.has('improved')) {
     diags.push({ level: 'info', code: 'N-431', message: '全体可読性スコアにより改善経路を採用' });

@@ -74,7 +74,8 @@ export interface IrEdge {
   kind: EdgeKind;
   from: string;
   to: string;
-  label?: string; // 条件ラベル
+  label?: string; // 表示名。成立条件とは独立
+  condition?: string; // 明示された成立条件
   mainHint: boolean; // 「=>」修辞ヒント: 本流の選挙で優先。Default Flow とは別概念
   returnHint?: boolean; // 「->>」修辞ヒント: 戻り辺の選挙で優先。DFS 既定とは別。向きと接続は変えない
   isDefault?: boolean; // BPMN Default Sequence Flow（斜線マーカー）。=> とは独立

@@ -1093,9 +1093,25 @@ function parse(source) {
     ensureLane("\uFF1F", "\uFF1F", 0);
   }
   for (const e of edges) {
-    if (e.kind !== "seq" || !e.label) continue;
+    if (!e.label) continue;
+    const condition = /^\[if\s+("(?:[^"\\]|\\.)*"|[^\]]+)\]\s*(.*)$/u.exec(e.label);
+    if (condition && e.kind === "seq") {
+      e.condition = condition[1].trim();
+      if (e.condition.startsWith('"')) {
+        try {
+          e.condition = JSON.parse(e.condition);
+        } catch {
+          diags.push({ level: "error", code: "E-209", message: `${e.id}: \u6761\u4EF6\u306E\u5F15\u7528\u6587\u5B57\u5217\u304C\u4E0D\u6B63` });
+        }
+      }
+      e.label = condition[2].trim() || e.condition;
+      e.isConditional = !isGatewayKind(nodeById.get(e.from).kind);
+      continue;
+    }
     const src = nodeById.get(e.from);
-    if (src && !isGatewayKind(src.kind)) e.isConditional = true;
+    if (e.kind === "seq" && src && !isGatewayKind(src.kind)) {
+      diags.push({ level: "info", code: "N-208", message: `${e.from} -> ${e.to}: \u30E9\u30D9\u30EB\u306F\u8868\u793A\u540D\u3068\u3057\u3066\u6271\u3046\u3002\u6210\u7ACB\u6761\u4EF6\u306A\u3089 : [if \u6761\u4EF6] \u8868\u793A\u540D \u3092\u660E\u793A\u3059\u308B` });
+    }
   }
   const ir = { id: flowId, title, orientation, pools, lanes, nodes, edges };
   diags.push(...validateIr(ir));
@@ -1105,10 +1121,10 @@ function parseScopedName(text2) {
   const match = /^([^\s\[\]]+)\[(.*)\]$/u.exec(text2);
   return match ? { id: match[1], label: match[2], hasExplicitLabel: true } : { id: text2, label: text2, hasExplicitLabel: false };
 }
-function isMessageEventEndpoint(node, direction) {
+function isMessageEventEndpoint(node, direction2) {
   const messageTrigger = node.subtype === "message" || node.subtype === "multiple" || node.subtype === "parallelMultiple";
   if (!messageTrigger) return false;
-  if (direction === "receive") {
+  if (direction2 === "receive") {
     return node.kind === "start" || node.kind === "boundary" || node.kind === "mid" && node.eventThrow !== true;
   }
   return node.kind === "end" || node.kind === "mid" && node.eventThrow === true;
@@ -1442,6 +1458,7 @@ function normalize(ir, strict2 = false) {
     let cur = first;
     const visited = /* @__PURE__ */ new Set();
     const path = [];
+    const choices = [];
     while (!visited.has(cur.id)) {
       visited.add(cur.id);
       path.push(cur.id);
@@ -1452,12 +1469,13 @@ function normalize(ir, strict2 = false) {
       const candidates = completing.length > 0 ? completing : outs;
       const chosen = outs.find((e) => e.mainHint) ?? candidates.find((e) => e.label === void 0) ?? candidates.find((e) => nodeById.get(e.to)?.lane === cur.lane) ?? candidates[0];
       chosen.onSpine = true;
+      if (outs.length > 1) choices.push(`${cur.id}->${chosen.to}=${chosen.mainHint ? "explicit-hint" : chosen.label === void 0 ? "unlabeled" : nodeById.get(chosen.to)?.lane === cur.lane ? "same-lane" : "declaration-order"}`);
       cur = nodeById.get(chosen.to);
     }
     report.push({
       level: "info",
       code: "N-222",
-      message: `\u672C\u6D41\u3092\u9078\u6319(${pool || "default"}): ${path.join(" -> ")}`
+      message: `\u63CF\u753B\u7528\u9AA8\u683C\u3092\u9078\u629E(${pool || "default"}): ${path.join(" -> ")}; reasons=${choices.join(",") || "single-path"}; \u81EA\u52D5\u9078\u629E\u306F\u696D\u52D9\u4E0A\u306E\u901A\u5E38\u7D4C\u8DEF\u30FB\u6210\u529F\u7D50\u679C\u3092\u4FDD\u8A3C\u3057\u306A\u3044`
     });
   }
   assignBoundarySides(nodes, edges, ir);
@@ -5759,6 +5777,46 @@ function clonePlan(rp) {
   };
 }
 
+// src/route/local-candidates.ts
+var direction = (a, b) => `${Math.sign(b.x - a.x)},${Math.sign(b.y - a.y)}`;
+function* localSequenceCandidates(g) {
+  const replace = (changes) => ({
+    ...g,
+    edges: g.edges.map((e) => ({ ...e, points: changes.get(e.id) ?? e.points, hops: void 0 }))
+  });
+  const sequences = g.edges.filter((e) => e.kind === "seq");
+  for (let i = 0; i < sequences.length; i++) {
+    const a = sequences[i];
+    for (const b of sequences.slice(i + 1)) {
+      if (a.to !== b.to || a.points.length < 3 || b.points.length < 3) continue;
+      const ap = a.points.at(-1), bp = b.points.at(-1);
+      const aq = a.points.at(-2), bq = b.points.at(-2);
+      if (direction(aq, ap) !== direction(bq, bp)) continue;
+      const horizontal = aq.y === ap.y;
+      if (horizontal ? ap.x !== bp.x : ap.y !== bp.y) continue;
+      const tail = (e, port) => {
+        const p = e.points.slice(0, -2);
+        const q = e.points.at(-2);
+        return [...p, horizontal ? { x: q.x, y: port.y } : { x: port.x, y: q.y }, { ...port }];
+      };
+      yield replace(/* @__PURE__ */ new Map([[a.id, tail(a, bp)], [b.id, tail(b, ap)]]));
+    }
+  }
+  for (const e of sequences) {
+    const p = e.points;
+    if (p.length < 5) continue;
+    const a = p[0], b = p.at(-1);
+    const paths = [];
+    for (const x of new Set(p.map((q) => q.x))) paths.push([a, { x, y: a.y }, { x, y: b.y }, b]);
+    for (const y of new Set(p.map((q) => q.y))) paths.push([a, { x: a.x, y }, { x: b.x, y }, b]);
+    for (const path of paths) {
+      const q = simplify(path);
+      if (q.length < 2 || q.length >= p.length || direction(q[0], q[1]) !== direction(p[0], p[1]) || direction(q.at(-2), q.at(-1)) !== direction(p.at(-2), p.at(-1))) continue;
+      yield replace(/* @__PURE__ */ new Map([[e.id, q]]));
+    }
+  }
+}
+
 // src/oarsp.ts
 var CLEAR = 8;
 var PORT_STEM = 20;
@@ -6180,9 +6238,9 @@ function visualAppearancePenalty(geometry) {
     penalty += length - Math.abs(last.x - first.x) - Math.abs(last.y - first.y);
     if (!edge.isReturn) {
       const axis = geometry.orientation === "horizontal" ? "x" : "y";
-      const direction = Math.sign(last[axis] - first[axis]);
-      if (direction !== 0) for (let i = 0; i + 1 < edge.points.length; i++) {
-        const step = (edge.points[i + 1][axis] - edge.points[i][axis]) * direction;
+      const direction2 = Math.sign(last[axis] - first[axis]);
+      if (direction2 !== 0) for (let i = 0; i + 1 < edge.points.length; i++) {
+        const step = (edge.points[i + 1][axis] - edge.points[i][axis]) * direction2;
         if (step < 0) penalty -= step;
       }
     }
@@ -7136,7 +7194,24 @@ function compile(source, opts = {}) {
     const labelReport = placeEdgeLabels(oarspGeometry);
     consider(candidateOf("oarsp", { ...selected.assembled, geometry: oarspGeometry, labelReport }));
   }
+  for (let sweep = 0; sweep < 4; sweep++) {
+    const before = selected;
+    for (const geometry2 of localSequenceCandidates(before.geometry)) {
+      const introducesSharing = geometry2.edges.some((a, i) => geometry2.edges.slice(i + 1).some((b, j) => sharedPair(a, b) > sharedPair(before.geometry.edges[i], before.geometry.edges[i + 1 + j]) + 0.01));
+      if (introducesSharing) continue;
+      const violations = checkOracle(normalized, geometry2);
+      if (violations.length > 0) continue;
+      computeHops(geometry2.edges);
+      const labelReport = placeEdgeLabels(geometry2);
+      if (labelReport.nodeHits > selected.labelReport.nodeHits || labelReport.edgeHits > selected.labelReport.edgeHits || labelReport.labelHits > selected.labelReport.labelHits) continue;
+      consider(candidateOf("local-sequence", { ...selected.assembled, geometry: geometry2, labelReport }));
+    }
+    if (before === selected) break;
+  }
   const geometry = selected.geometry;
+  if (adopted.has("local-sequence")) {
+    diags.push({ level: "info", code: "N-435", message: "\u5168\u56F3\u691C\u67FB\u306B\u3088\u308A\u5408\u6D41\u30DD\u30FC\u30C8\u4EA4\u63DB\u30FB\u30B7\u30FC\u30B1\u30F3\u30B9\u77ED\u7D61\u5019\u88DC\u3092\u63A1\u7528" });
+  }
   const edges = geometry.edges;
   if (adopted.has("improved")) {
     diags.push({ level: "info", code: "N-431", message: "\u5168\u4F53\u53EF\u8AAD\u6027\u30B9\u30B3\u30A2\u306B\u3088\u308A\u6539\u5584\u7D4C\u8DEF\u3092\u63A1\u7528" });
@@ -7500,6 +7575,14 @@ function evaluateDelivery(options) {
         message: `\u30EC\u30D3\u30E5\u30FC\u53F0\u5E33 ${row.line} \u884C\u76EE\u306E view:id\u300C${row.viewId}\u300D\u304C\u6210\u679C\u7269\u306B\u5B58\u5728\u3057\u306A\u3044`
       });
       continue;
+    }
+    if (row.kind === "unknown-topology" && row.status === "unresolved") {
+      const outside = ref.target === "*" && listValue(row.reason, "scope")?.join() === "outside";
+      if (!outside) findings.push({
+        level: "error",
+        code: "E-520",
+        message: `${row.viewId}: \u672A\u89E3\u6C7A\u306E\u696D\u52D9\u63A5\u7D9A\u30FB\u540C\u671F\u30FB\u5B8C\u4E86\u6761\u4EF6\u304C\u5BFE\u8C61\u30B9\u30B3\u30FC\u30D7\u306B\u6B8B\u3063\u3066\u3044\u308B\u3002\u6839\u62E0\u3092\u78BA\u8A8D\u3059\u308B\u304B\u3001\u652F\u6301\u3055\u308C\u305F\u9589\u3058\u305F\u7BC4\u56F2\u3078\u7E2E\u5C0F\u3059\u308B`
+      });
     }
     if (ref.target === "*" || /^W-\d+$/u.test(ref.target)) continue;
     const view = byView.get(ref.view);

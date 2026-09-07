@@ -508,7 +508,7 @@ task A[a]
 task B[b]
 end e
 s -> A
-A -> B: 条件付き
+A -> B: [if 条件成立] 条件付き
 B -> e`);
     expect(r.svg).toContain('data-conditional-diamond="true"');
     expect(r.normalized.edges.find((e) => e.from === 'A' && e.to === 'B')?.isConditional).toBe(true);
@@ -530,7 +530,7 @@ g ->/ B`);
     const conditionalDefault = compile(`lane L
 task A[a]
 task B[b]
-A ->/ B: 条件`);
+A ->/ B: [if 条件]`);
     expect(conditionalDefault.diagnostics.some((d) => d.code === 'W-316' && d.message.includes('条件'))).toBe(true);
   });
 });

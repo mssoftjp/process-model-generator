@@ -237,7 +237,7 @@ describe('BPMN XML → DSL → SVG', () => {
   </process>
 </definitions>`;
     const { flow, stats } = convert(xml);
-    expect(flow).toContain(': amount > 0');
+    expect(flow).toContain(': [if "amount > 0"]');
     expect(flow).toContain('<..>');
     expect(stats.unsupportedCount).toBe(0);
     const r = compile(flow);

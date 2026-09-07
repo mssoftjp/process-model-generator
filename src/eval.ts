@@ -253,6 +253,15 @@ export function evaluateDelivery(options: DeliveryEvalOptions): DeliveryEvalResu
       });
       continue;
     }
+    if (row.kind === 'unknown-topology' && row.status === 'unresolved') {
+      // 自由文の意味を推測せず、成果物内を指す未確定 topology を合格させない。
+      // スコープ外の未知事項は view:* と scope=outside の組で隔離する。
+      const outside = ref.target === '*' && listValue(row.reason, 'scope')?.join() === 'outside';
+      if (!outside) findings.push({
+        level: 'error', code: 'E-520',
+        message: `${row.viewId}: 未解決の業務接続・同期・完了条件が対象スコープに残っている。根拠を確認するか、支持された閉じた範囲へ縮小する`,
+      });
+    }
     if (ref.target === '*' || /^W-\d+$/u.test(ref.target)) continue;
     const view = byView.get(ref.view)!;
     const nodeExists = view.ir.nodes.some((node) => node.id === ref.target);
