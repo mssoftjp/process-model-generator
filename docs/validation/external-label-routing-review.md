@@ -29,8 +29,12 @@ The remaining crossing is between `e24_register_payment_execute_transfer` and `e
 
 ## Verification and limits
 
-`npm test` passes 21 files and 285 tests, including 500 horizontal and 500 vertical generated cases. The fuzz batch now yields to the event loop every ten cases so the test worker can flush progress; case counts and the 60-second per-orientation limit are unchanged. Dedicated fixtures cover unlabeled sequence/data/message lines crossing their own document text, mixed input face changes with reversed geometry declaration order, distinct gateway exits, Japanese multiline and shifted event labels, and crossings suppressed by hop rendering. The existing fixed-placement checks remain separate from placement acceptance.
+At initial review, `npm test` passed 21 files and 285 tests, including 500 horizontal and 500 vertical generated cases. The fuzz batch now yields to the event loop every ten cases so the test worker can flush progress; case counts and the original 60-second timeout were retained at that stage. Dedicated fixtures cover unlabeled sequence/data/message lines crossing their own document text, mixed input face changes with reversed geometry declaration order, distinct gateway exits, Japanese multiline and shifted event labels, and crossings suppressed by hop rendering. The existing fixed-placement checks remain separate from placement acceptance.
 
 The final vertical and horizontal SVGs were rendered with librsvg and visually inspected. Browser opening was blocked by URL policy, so browser-specific rendering remains unverified. Local comparison artifacts and exact metrics are under `outputs/review-external-labels/`.
 
 The supplied completion condition remains unresolved; its AND join is preserved for a reproducible compiler regression and is not business approval. `E-520` still rejects the unresolved in-scope ledger. Existing interview/release work is preserved. No commit, push, or release is part of this review response.
+
+## Release follow-up
+
+The v0.2.22 CI run passed the ordinary regressions but exceeded the timeout for the two 500-case fuzz tests, so no release assets were published. The follow-up retains all 1000 seeds and all assertions, splitting them into 50-case batches with the same 60-second timeout per batch. The already-pushed v0.2.22 tag is retained; v0.2.23 contains this test-harness correction. The compiler behavior is unchanged by that follow-up.

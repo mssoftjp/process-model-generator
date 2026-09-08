@@ -10,25 +10,28 @@ import { genSource, mulberry32 } from './fuzz-gen.ts';
 describe('fuzz × oracle', () => {
   // Orientation only changes the physical axis used by each O-* check.
   for (const orientation of ['horizontal', 'vertical'] as const) {
-    it(`has zero oracle violations across 500 random cases (${orientation})`, async () => {
-      const prefix = orientation === 'vertical' ? 'orientation vertical\n' : '';
-      const failures: string[] = [];
-      for (let seed = 1; seed <= 500; seed++) {
-        // Let the worker flush progress messages during this CPU-bound batch.
-        if (seed % 10 === 0) await new Promise<void>(resolve => setImmediate(resolve));
-        const src = prefix + genSource(mulberry32(seed * 40503 + 7));
-        try {
-          const r = compile(src);
-          const viols = r.diagnostics.filter((d) => d.code.startsWith('O-') || d.code === 'W-252');
-          if (viols.length > 0) {
-            failures.push(`seed=${seed}\n${viols.map((v) => v.message).join('\n')}\n---\n${src}`);
+    // Keep the same 500 seeds per orientation; bound each independently reported batch.
+    for (let start = 1; start <= 500; start += 50) {
+      it(`has zero oracle violations for seeds ${start}-${start + 49} (${orientation})`, async () => {
+        const prefix = orientation === 'vertical' ? 'orientation vertical\n' : '';
+        const failures: string[] = [];
+        for (let seed = start; seed < start + 50; seed++) {
+          // Let the worker flush progress messages during this CPU-bound batch.
+          if (seed % 10 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+          const src = prefix + genSource(mulberry32(seed * 40503 + 7));
+          try {
+            const r = compile(src);
+            const viols = r.diagnostics.filter((d) => d.code.startsWith('O-') || d.code === 'W-252');
+            if (viols.length > 0) {
+              failures.push(`seed=${seed}\n${viols.map((v) => v.message).join('\n')}\n---\n${src}`);
+            }
+          } catch (err) {
+            failures.push(`seed=${seed} threw: ${String(err)}\n---\n${src}`);
           }
-        } catch (err) {
-          failures.push(`seed=${seed} threw: ${String(err)}\n---\n${src}`);
         }
-      }
-      expect(failures, failures.slice(0, 3).join('\n\n')).toEqual([]);
-    }, 60_000);
+        expect(failures, failures.slice(0, 3).join('\n\n')).toEqual([]);
+      }, 60_000);
+    }
   }
 
   it('is deterministic for the same generated seed', () => {

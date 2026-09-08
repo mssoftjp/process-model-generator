@@ -8127,7 +8127,7 @@ if (process.stderr.isTTY) {
 }
 var args = process.argv.slice(2);
 if (args.includes("--version")) {
-  print(process.stdout, "0.2.22");
+  print(process.stdout, "0.2.23");
   process.exit(0);
 }
 if (args[0] === "eval") {
@@ -8148,7 +8148,7 @@ if (args[0] === "eval") {
     reportPath,
     parentId,
     consulting,
-    version: "0.2.22"
+    version: "0.2.23"
   });
   for (const finding of result.findings) {
     const tag = finding.level === "error" ? "ERROR" : finding.level === "warning" ? "WARN " : "info ";
@@ -8174,7 +8174,7 @@ try {
     const directory = mkdtempSync(tmpdir() + "/bpmn-detail-");
     try {
       execFileSync("python3", [fileURLToPath(new URL("./bpmn-detail.py", import.meta.url)), input, directory, input]);
-      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.22");
+      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.23");
       if (output) {
         mkdirSync(dirname(output), { recursive: true });
         writeFileSync(output, result2.svg);
@@ -8190,7 +8190,7 @@ try {
   const result = compile(source, {
     strict,
     orientation: verticalDefault ? "vertical" : void 0,
-    version: "0.2.22"
+    version: "0.2.23"
   });
   for (const d of result.diagnostics) {
     const tag = d.level === "error" ? "ERROR" : d.level === "warning" ? "WARN " : "info ";
