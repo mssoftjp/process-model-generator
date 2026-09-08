@@ -1,3 +1,4 @@
+import { externalNodeLabel } from './node-labels.ts';
 // SVG 出力。描画は幾何の写像であり、ここで位置の判断はしない。
 // - 折返しはエンジンの計測で決まった行を tspan で明示し、textLength で幅を強制する(R5, C-83)
 // - 矢印は marker でなくパスで描く(マーカーの線短縮補正を仕様から消す)
@@ -234,11 +235,7 @@ function renderNode(n: NodeGeom, emphasized: boolean): string {
       `<path d="M ${cx} ${cy - h} L ${cx + h} ${cy} L ${cx} ${cy + h} L ${cx - h} ${cy} Z" fill="${C.nodeFill}" stroke="${stroke}" stroke-width="${sw}"${dash}/>`,
     );
     out.push(gatewayInner(n, stroke));
-    const totalH = n.labelLines.length * OUT_LABEL_LINE_H;
-    n.labelLines.forEach((line, i) => {
-      const y = n.y - 6 - totalH + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, n.cx - 8, y, OUT_LABEL_FONT, C.subText, 'end', 400, true, true));
-    });
+    out.push(renderExternalNodeLabel(n));
     return out.join('\n');
   }
 
@@ -253,10 +250,7 @@ function renderNode(n: NodeGeom, emphasized: boolean): string {
       `<ellipse cx="${n.cx}" cy="${y + ry}" rx="${w / 2}" ry="${ry}" fill="${C.nodeFill}" stroke="${stroke}" stroke-width="${sw}"${dash}/>`,
       `<path d="M ${x} ${y + ry + 5} A ${w / 2} ${ry} 0 0 0 ${x + w} ${y + ry + 5}" fill="none" stroke="${stroke}" stroke-width="1"/>`,
     );
-    n.labelLines.forEach((line, i) => {
-      const ly = n.y + n.h + 4 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, n.cx + 6, ly, OUT_LABEL_FONT, C.subText, 'start', 400, true, true));
-    });
+    out.push(renderExternalNodeLabel(n));
     return out.join('\n');
   }
 
@@ -305,10 +299,7 @@ function renderNode(n: NodeGeom, emphasized: boolean): string {
       );
       out.push(dataObjectExtras({ ...n, h: bodyH }, stroke));
     }
-    n.labelLines.forEach((line, i) => {
-      const ly = n.y + n.h + 4 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, n.cx + 6, ly, OUT_LABEL_FONT, C.subText, 'start', 400, true, true));
-    });
+    out.push(renderExternalNodeLabel(n));
     return out.join('\n');
   }
 
@@ -334,22 +325,16 @@ function renderNode(n: NodeGeom, emphasized: boolean): string {
     out.push(`<circle cx="${n.cx}" cy="${n.cy}" r="${r - 4}" fill="none" stroke="${stroke}" stroke-width="1.2"${eventDash}/>`);
   }
   out.push(eventMarkerGroup(n, stroke));
-  const totalH = n.labelLines.length * OUT_LABEL_LINE_H;
-  if (n.labelSide === 'left' || n.labelSide === 'right') {
-    const lx = n.labelSide === 'left' ? n.x - 6 : n.x + n.w + 6;
-    n.labelLines.forEach((line, i) => {
-      const y = n.cy + (n.labelShift ?? 0) - totalH / 2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, lx, y, OUT_LABEL_FONT, C.subText, n.labelSide === 'left' ? 'end' : 'start', 400, true, true));
-    });
-    return out.join('\n');
-  }
-  n.labelLines.forEach((line, i) => {
-    const y = n.labelSide === 'top'
-      ? n.y - 6 - totalH + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2
-      : n.y + n.h + 6 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-    out.push(text(line, n.cx, y, OUT_LABEL_FONT, C.subText, 'middle', 400, true, true));
-  });
+  out.push(renderExternalNodeLabel(n));
   return out.join('\n');
+}
+
+function renderExternalNodeLabel(n: NodeGeom): string {
+  const label = externalNodeLabel(n);
+  if (!label) return '';
+  return n.labelLines.map((line, i) => text(line, label.x,
+    label.box.y + (i + 0.5) * OUT_LABEL_LINE_H, OUT_LABEL_FONT, C.subText,
+    label.anchor, 400, true, true)).join('\n');
 }
 
 // ---- 辺 ----

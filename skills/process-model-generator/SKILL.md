@@ -62,6 +62,8 @@ node scripts/process-model-generator.mjs inputs/flow/process.flow -o outputs/pre
 
 Strict compilation proves syntax and selected invariants, not business truth or visual quality. Reconcile diagnostics with the coverage ledger, then inspect the SVG: follow the main path, alternatives and rejoins; check responsibility boundaries, message corridors, artifact semantics, labels, ports, crossings, and every group of edges sharing a node. Do not hand-edit generated coordinates.
 
+Check lines against external document names (including a document's own outgoing line), mixed sequence/data inputs at a task, and shared stems immediately after gateways. Report any remaining interference by edge and node ID. These are compiler routing responsibilities; do not alter business topology or relabel the source merely to hide them.
+
 Report strict compilation, evidence consistency, automated geometry checks, and visual inspection separately. `N-222` describes a drawing backbone and its selection reasons; same-lane preference or declaration order does not establish normal business outcomes. A matching SVG hash identifies the reviewed artifact, not the truth of the review.
 
 For a delivery directory, run the `eval` command and ledger rules in [the advanced DSL and delivery reference](references/dsl-advanced.md); use the consulting workflow's `--consulting` form when applicable. Treat a nonzero result as incomplete. When ownership matters, also compile with `--emit-normalized` and verify each `doc` and `store` lane.

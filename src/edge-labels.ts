@@ -2,15 +2,10 @@
 // 経路・ノード・キャンバス寸法は変えず、既存位置が空いていれば動かさない。
 
 import { EDGE_FONT_SIZE, measureText } from './metrics.ts';
-import { OUT_LABEL_FONT, OUT_LABEL_LINE_H } from './measure.ts';
-import type { EdgeGeom, Geometry, NodeGeom, Pt } from './types.ts';
-
-export interface Box {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
+import { nodeObstacles } from './node-labels.ts';
+import type { Box } from './node-labels.ts';
+export type { Box } from './node-labels.ts';
+import type { EdgeGeom, Geometry, Pt } from './types.ts';
 
 export interface EdgeLabelReport {
   moved: number;
@@ -169,27 +164,6 @@ export function inspectEdgeLabels(geometry: Geometry): Omit<EdgeLabelReport, 'mo
     if (other < own + AMBIG_GAP) ambiguous++;
   }
   return { nodeHits, edgeHits, labelHits, stolen, ambiguous, details };
-}
-
-function nodeObstacles(n: NodeGeom): Box[] {
-  const out: Box[] = [{ x: n.x, y: n.y, w: n.w, h: n.h }];
-  if (n.kind === 'task' || n.kind === 'note' || n.kind === 'group' || n.labelLines.length === 0) return out;
-  const labelW = Math.max(...n.labelLines.map((line) => measureText(line, OUT_LABEL_FONT)));
-  const labelH = n.labelLines.length * OUT_LABEL_LINE_H;
-  if (n.kind === 'xor' || n.kind === 'and') {
-    out.push({ x: n.cx - 8 - labelW, y: n.y - 6 - labelH, w: labelW, h: labelH });
-  } else if (n.kind === 'doc' || n.kind === 'store') {
-    out.push({ x: n.cx + 6, y: n.y + n.h + 4, w: labelW, h: labelH });
-  } else if (n.labelSide === 'left') {
-    out.push({ x: n.x - 6 - labelW, y: n.cy - labelH / 2, w: labelW, h: labelH });
-  } else if (n.labelSide === 'right') {
-    out.push({ x: n.x + n.w + 6, y: n.cy + (n.labelShift ?? 0) - labelH / 2, w: labelW, h: labelH });
-  } else if (n.labelSide === 'top') {
-    out.push({ x: n.cx - labelW / 2, y: n.y - 6 - labelH, w: labelW, h: labelH });
-  } else {
-    out.push({ x: n.cx + (n.labelShift ?? 0) - labelW / 2, y: n.y + n.h + 6, w: labelW, h: labelH });
-  }
-  return out;
 }
 
 interface Candidate {

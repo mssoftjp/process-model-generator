@@ -332,6 +332,8 @@ export interface CompileOptions {
   orientation?: Orientation;
   // 配布 CLI が SVG に刻む生成元版。ライブラリ利用時の既定は dev。
   version?: string;
+  // false は P2 配置を固定して配線だけ比較する。既定は残存交差周辺の限定再配置を許す。
+  optimizePlacement?: boolean;
 }
 
 export interface CompileResult {

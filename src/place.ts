@@ -9,7 +9,8 @@
 import { isAttachedBoundary } from './bpmn.ts';
 import { buildPoolIndex, type PoolIndex } from './pools.ts';
 import { isDocLike } from './types.ts';
-import type { NormEdge, NormGraph, NormNode, Placement } from './types.ts';
+import type { Geometry, NormEdge, NormGraph, NormNode, Placement } from './types.ts';
+import { rawHits } from './route-intersections.ts';
 
 /**
  * 列を拘束するグラフ: シーケンス辺 ＋ doc へ入るデータ関連。
@@ -576,4 +577,47 @@ function assignRows({ g, col, docIds, nodeById }: PlaceCtx) {
     laneRows.set(lane.id, Math.max(0, ...rows) + 1);
   }
   return { row, laneRows, reserved };
+}
+
+/** Two local discrete alternatives at most. No label vocabulary or business outcome
+ * influences these choices. Columns (time), IDs, lanes and graph edges stay fixed.
+ */
+export function* localPlacementCandidates(g: NormGraph, p: Placement, geometry: Geometry): Generator<Placement> {
+  const nodes = new Map(g.nodes.map(n => [n.id, n]));
+  const edges = new Map(geometry.edges.map(e => [e.id, e]));
+  const hits = rawHits(geometry.edges);
+  const swappedLanes = new Set<string>();
+  let count = 0;
+  for (const hit of hits) {
+    const a = edges.get(hit.a)!, b = edges.get(hit.b)!;
+    const u = nodes.get(a.from), v = nodes.get(b.from);
+    if (a.kind !== 'seq' || b.kind !== 'seq' || !u || !v || u.lane !== v.lane || u.id === v.id || swappedLanes.has(u.lane)) continue;
+    const parents = new Set(g.edges.filter(e => e.kind === 'seq' && e.to === u.id).map(e => e.from));
+    if (!g.edges.some(e => e.kind === 'seq' && e.to === v.id && parents.has(e.from))) continue;
+    if (p.col.get(u.id) !== p.col.get(v.id) || p.row.get(u.id) === p.row.get(v.id) ||
+        [u, v].some(n => isAttachedBoundary(n) || g.nodes.some(other => other.attachedTo === n.id))) continue;
+    swappedLanes.add(u.lane);
+    const row = new Map(p.row);
+    row.set(u.id, p.row.get(v.id)!); row.set(v.id, p.row.get(u.id)!);
+    // Both occupied cells stay occupied, so conservative chain reservations remain valid.
+    yield { ...p, row };
+    if (++count >= 2) return;
+  }
+  const swapped = new Set<string>();
+  for (const hit of hits) {
+    const a = edges.get(hit.a)!, b = edges.get(hit.b)!;
+    if (a.kind !== 'assoc' || b.kind !== 'assoc') continue;
+    const docs = [a, b].map(e => [nodes.get(e.from), nodes.get(e.to)].find(n => n?.kind === 'doc'));
+    const [u, v] = docs;
+    if (!u || !v || u.id === v.id || u.lane !== v.lane || p.col.get(u.id) !== p.col.get(v.id) || p.row.get(u.id) === p.row.get(v.id)) continue;
+    const key = [u.id, v.id].sort().join(':');
+    if (swapped.has(key)) continue;
+    const col = p.col.get(u.id)!;
+    if (![u, v].every(n => p.reserved.get(n.lane)?.some(r => r.row === p.row.get(n.id) && r.c0 === col && r.c1 === col))) continue;
+    swapped.add(key);
+    const row = new Map(p.row);
+    row.set(u.id, p.row.get(v.id)!); row.set(v.id, p.row.get(u.id)!);
+    yield { ...p, row };
+    if (++count >= 2) return;
+  }
 }

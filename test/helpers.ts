@@ -2,6 +2,7 @@
 
 import { expect } from 'vitest';
 import { compile } from '../src/compile.ts';
+import type { CompileOptions } from '../src/types.ts';
 
 export const BRANCH_FLOW = `flow review
 pool internal[Internal]
@@ -101,8 +102,8 @@ C ~> S2: 交換・追納依頼`;
 
 export const SMOKE_FLOWS = [BRANCH_FLOW, IMPLICIT_JOIN_FLOW, COLLABORATION_FLOW];
 
-export const noOracleViolations = (src: string) => {
-  const r = compile(src);
+export const noOracleViolations = (src: string, options: CompileOptions = {}) => {
+  const r = compile(src, options);
   const oracle = r.diagnostics.filter((d) => d.code.startsWith('O-'));
   expect(oracle, oracle.map((d) => d.message).join('\n')).toEqual([]);
   return r;

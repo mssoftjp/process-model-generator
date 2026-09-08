@@ -2011,6 +2011,324 @@ function measureNode(n, labelCrossMinus, orientation, hang) {
   };
 }
 
+// src/wire.ts
+function wire(g, rp, co, orientation = "horizontal", titleShift = 0) {
+  const vertical = orientation === "vertical";
+  const edgeById = new Map(g.edges.map((e) => [e.id, e]));
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
+  const siblingIndex = /* @__PURE__ */ new Map();
+  const siblingCount = /* @__PURE__ */ new Map();
+  for (const plan of rp.plans) {
+    const e = edgeById.get(plan.edgeId);
+    if (!e.label) continue;
+    const key2 = `${e.from}:${plan.fromSide}`;
+    siblingIndex.set(e.id, siblingCount.get(key2) ?? 0);
+    siblingCount.set(key2, (siblingCount.get(key2) ?? 0) + 1);
+  }
+  const out = [];
+  for (const plan of rp.plans) {
+    const e = edgeById.get(plan.edgeId);
+    const resolved = plan.points.map((sp) => resolve(sp, co, rp));
+    if (!e.fromPool && resolved.length > 1) {
+      resolved[0] = clipToShape(resolved[0], co.nodeGeom.get(e.from), plan.fromSide);
+    }
+    if (!e.toPool && resolved.length > 1) {
+      const last = resolved.length - 1;
+      resolved[last] = clipToShape(resolved[last], co.nodeGeom.get(e.to), plan.toSide);
+    }
+    const logical = simplify(resolved);
+    const pts = vertical ? logical.map((p) => ({ x: p.y, y: p.x + titleShift })) : logical;
+    out.push({
+      id: e.id,
+      kind: e.kind,
+      from: e.from,
+      to: e.to,
+      label: e.label,
+      fromPool: e.fromPool,
+      toPool: e.toPool,
+      points: pts,
+      labelPos: e.label ? labelPos(
+        pts,
+        e.label,
+        e.isReturn,
+        siblingIndex.get(e.id) ?? 0,
+        isGatewayKind(nodeById.get(e.from)?.kind ?? "task") && !e.onSpine,
+        vertical,
+        e.kind === "msg"
+      ) : void 0,
+      onSpine: e.onSpine,
+      isReturn: e.isReturn,
+      provisional: e.provisional,
+      mainHint: e.mainHint,
+      returnHint: e.returnHint,
+      isDefault: e.isDefault,
+      isConditional: e.isConditional,
+      assocKind: e.assocKind
+    });
+  }
+  return out;
+}
+function clipToShape(p, n, side) {
+  const dx = p.x - n.cx;
+  const dy = p.y - n.cy;
+  if (isEventKind(n.kind)) {
+    const rx = n.w / 2;
+    const ry = n.h / 2;
+    if (side === "left" || side === "right") {
+      const x = rx * Math.sqrt(Math.max(0, 1 - dy * dy / (ry * ry)));
+      return { x: n.cx + (side === "right" ? x : -x), y: p.y };
+    }
+    const y = ry * Math.sqrt(Math.max(0, 1 - dx * dx / (rx * rx)));
+    return { x: p.x, y: n.cy + (side === "bottom" ? y : -y) };
+  }
+  if (isGatewayKind(n.kind)) {
+    const hw = n.w / 2;
+    const hh = n.h / 2;
+    if (side === "left" || side === "right") {
+      const x = hw * Math.max(0, 1 - Math.abs(dy) / hh);
+      return { x: n.cx + (side === "right" ? x : -x), y: p.y };
+    }
+    const y = hh * Math.max(0, 1 - Math.abs(dx) / hw);
+    return { x: p.x, y: n.cy + (side === "bottom" ? y : -y) };
+  }
+  return p;
+}
+function resolve(sp, co, rp) {
+  const laneG = (id) => co.lanes.find((l) => l.id === id);
+  let x;
+  switch (sp.x.t) {
+    case "portX":
+      x = co.portPt(sp.x.id, sp.x.side).x;
+      break;
+    case "gutter":
+      x = co.gutterX(sp.x.g, sp.x.side, rp.gutterRunTrack.get(sp.x.run) ?? 0);
+      break;
+    case "nodeCX":
+      x = co.nodeGeom.get(sp.x.id).cx + (sp.x.offset ?? 0);
+      break;
+  }
+  let y;
+  switch (sp.y.t) {
+    case "portY":
+      y = co.portPt(sp.y.id, sp.y.side).y;
+      break;
+    case "nodeCY":
+      y = co.nodeGeom.get(sp.y.id).cy + (sp.y.offset ?? 0);
+      break;
+    case "portStubY": {
+      const py = co.portPt(sp.y.id, sp.y.side).y;
+      y = py + (sp.y.side === "bottom" ? sp.y.offset : -sp.y.offset);
+      break;
+    }
+    case "channel":
+      y = co.channelY(sp.y.lane, sp.y.row, rp.channelRunTrack.get(sp.y.run) ?? 0);
+      break;
+    case "poolChannel":
+      y = co.poolChannelY(sp.y.gap, rp.poolGapRunTrack.get(sp.y.run) ?? 0);
+      break;
+    case "rowMid":
+      y = co.rowMid.get(`${sp.y.lane}:${sp.y.row}`);
+      break;
+    case "laneEdge": {
+      const lg = laneG(sp.y.lane);
+      y = sp.y.edge === "top" ? lg.y : lg.y + lg.h;
+      break;
+    }
+  }
+  return { x, y };
+}
+function simplify(pts) {
+  const dedup = [];
+  for (const p of pts) {
+    const last = dedup[dedup.length - 1];
+    if (last && Math.abs(last.x - p.x) < 0.01 && Math.abs(last.y - p.y) < 0.01) continue;
+    dedup.push(p);
+  }
+  const out = [];
+  for (let i = 0; i < dedup.length; i++) {
+    const a = out[out.length - 1];
+    const b = dedup[i];
+    const c = dedup[i + 1];
+    if (a && c && (a.x === b.x && b.x === c.x || a.y === b.y && b.y === c.y)) continue;
+    out.push(b);
+  }
+  return out;
+}
+var HOP_MARGIN = 12;
+var CROSS_EPS = 4;
+function computeHops(edges) {
+  const hits = [];
+  for (let i = 0; i < edges.length; i++) {
+    for (let j = i + 1; j < edges.length; j++) {
+      const e1 = edges[i];
+      const e2 = edges[j];
+      for (let s1 = 0; s1 + 1 < e1.points.length; s1++) {
+        for (let s2 = 0; s2 + 1 < e2.points.length; s2++) {
+          const cross = segCross(e1.points[s1], e1.points[s1 + 1], e2.points[s2], e2.points[s2 + 1]);
+          if (!cross) continue;
+          const h1 = Math.abs(e1.points[s1].y - e1.points[s1 + 1].y) < 0.01;
+          hits.push({ e: e1, seg: s1, horizontal: h1, a: e1.points[s1], b: e1.points[s1 + 1], x: cross.x, y: cross.y });
+          hits.push({ e: e2, seg: s2, horizontal: !h1, a: e2.points[s2], b: e2.points[s2 + 1], x: cross.x, y: cross.y });
+        }
+      }
+    }
+  }
+  const byPoint = /* @__PURE__ */ new Map();
+  for (const hit of hits) {
+    const key2 = `${hit.x},${hit.y}`;
+    const list = byPoint.get(key2) ?? [];
+    list.push(hit);
+    byPoint.set(key2, list);
+  }
+  for (const group2 of byPoint.values()) {
+    const x = group2[0].x;
+    const y = group2[0].y;
+    const bundles = /* @__PURE__ */ new Map();
+    for (const hit of group2) {
+      const bkey = `${hit.horizontal ? "h" : "v"}:${hit.horizontal ? hit.a.y : hit.a.x}`;
+      const list = bundles.get(bkey) ?? [];
+      if (!list.some((h) => h.e === hit.e && h.seg === hit.seg)) list.push(hit);
+      bundles.set(bkey, list);
+    }
+    const all = [...bundles.values()];
+    const hasSpine = (b) => b.some((h) => h.e.onSpine);
+    const canHop = (b) => b.some((h) => !h.e.onSpine && hopEndClear(h, x, y));
+    let hoppers;
+    if (all.some(hasSpine)) hoppers = all.filter((b) => !hasSpine(b));
+    else {
+      const horiz = all.filter((b) => b[0].horizontal);
+      hoppers = horiz.length > 0 ? horiz : all;
+    }
+    if (!hoppers.some(canHop)) {
+      const other = all.filter((b) => !hoppers.includes(b));
+      if (other.some(canHop)) hoppers = other;
+      else continue;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    for (const bundle of hoppers) {
+      for (const hit of bundle) {
+        if (hit.e.onSpine || !hopEndClear(hit, x, y)) continue;
+        const id = `${hit.e.id}:${hit.seg}:${x}:${y}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        (hit.e.hops ??= []).push({ seg: hit.seg, x, y });
+      }
+    }
+  }
+}
+function hopEndClear(hit, x, y) {
+  const dist = hit.horizontal ? Math.min(Math.abs(x - hit.a.x), Math.abs(x - hit.b.x)) : Math.min(Math.abs(y - hit.a.y), Math.abs(y - hit.b.y));
+  return dist >= HOP_MARGIN;
+}
+function segCross(a1, a2, b1, b2) {
+  const aH = Math.abs(a1.y - a2.y) < 0.01;
+  const bH = Math.abs(b1.y - b2.y) < 0.01;
+  if (aH === bH) return null;
+  const [h1, h2, v1, v2] = aH ? [a1, a2, b1, b2] : [b1, b2, a1, a2];
+  const x = v1.x;
+  const y = h1.y;
+  const [hx0, hx1] = h1.x < h2.x ? [h1.x, h2.x] : [h2.x, h1.x];
+  const [vy0, vy1] = v1.y < v2.y ? [v1.y, v2.y] : [v2.y, v1.y];
+  if (x < hx0 + CROSS_EPS || x > hx1 - CROSS_EPS) return null;
+  if (y < vy0 + CROSS_EPS || y > vy1 - CROSS_EPS) return null;
+  return { x, y };
+}
+function labelPos(pts, label, isReturn, sibling, preferBranchSeg, vertical = false, sourceFirst = false) {
+  const w = measureText(label, EDGE_FONT_SIZE);
+  const a = pts[0];
+  const b = pts[1] ?? a;
+  const stack = (base) => sibling === 0 ? base : { x: base.x, y: base.y + (EDGE_FONT_SIZE + 11) + (sibling - 1) * (EDGE_FONT_SIZE + 5) };
+  const isV = (p, q) => Math.abs(p.x - q.x) < 0.01;
+  const isH = (p, q) => Math.abs(p.y - q.y) < 0.01;
+  if (vertical) {
+    if (!isReturn && isV(a, b) && Math.abs(b.y - a.y) >= 24) {
+      return stack({ x: a.x + 8, y: a.y + (b.y > a.y ? 10 : -10 - EDGE_FONT_SIZE) });
+    }
+    if (!isReturn && preferBranchSeg) {
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const p = pts[i];
+        const q = pts[i + 1];
+        if (isH(p, q) && Math.abs(q.x - p.x) >= 16) {
+          const x = q.x > p.x ? p.x + 6 : p.x - 6 - w;
+          return { x, y: p.y - 6 - EDGE_FONT_SIZE };
+        }
+      }
+    }
+    if (!isReturn && sourceFirst && isH(a, b) && Math.abs(b.x - a.x) >= w + 12) {
+      const x = b.x > a.x ? a.x + 6 : a.x - 6 - w;
+      return stack({ x, y: a.y - 6 - EDGE_FONT_SIZE });
+    }
+    const minDy = isReturn ? 36 : 24;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const p = pts[i];
+      const q = pts[i + 1];
+      if (isV(p, q) && Math.abs(q.y - p.y) >= minDy) {
+        return stack({ x: p.x + 8, y: p.y + (q.y > p.y ? 6 : -6 - EDGE_FONT_SIZE) });
+      }
+    }
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const p = pts[i];
+      const q = pts[i + 1];
+      if (isH(p, q) && Math.abs(q.x - p.x) >= 16) {
+        const x = q.x > p.x ? p.x + 6 : p.x - 6 - w;
+        return stack({ x, y: p.y - 6 - EDGE_FONT_SIZE });
+      }
+    }
+    return stack({ x: a.x + 6, y: Math.min(a.y, b.y) - 6 - EDGE_FONT_SIZE });
+  }
+  if (!isReturn && isV(a, b) && Math.abs(b.y - a.y) >= 24) {
+    return stack({ x: a.x + 8, y: a.y + (b.y > a.y ? 10 : -10 - EDGE_FONT_SIZE) });
+  }
+  if (!isReturn && preferBranchSeg) {
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const p = pts[i];
+      const q = pts[i + 1];
+      if (isV(p, q) && Math.abs(q.y - p.y) >= 16) {
+        return { x: p.x + 8, y: p.y + Math.sign(q.y - p.y) * 10 - EDGE_FONT_SIZE / 2 };
+      }
+    }
+  }
+  const minDx = isReturn ? 36 : 16;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p = pts[i];
+    const q = pts[i + 1];
+    if (isH(p, q) && Math.abs(q.x - p.x) >= minDx) {
+      const x = q.x > p.x ? p.x + 6 : p.x - 6 - w;
+      return stack({ x, y: p.y - 6 - EDGE_FONT_SIZE });
+    }
+  }
+  return stack({ x: Math.min(a.x, b.x) + 6, y: a.y - 6 - EDGE_FONT_SIZE });
+}
+
+// src/route-intersections.ts
+function rawHits(edges) {
+  const hits = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (let i = 0; i < edges.length; i++) {
+    for (let j = i + 1; j < edges.length; j++) {
+      const e1 = edges[i];
+      const e2 = edges[j];
+      for (let s1 = 0; s1 + 1 < e1.points.length; s1++) {
+        for (let s2 = 0; s2 + 1 < e2.points.length; s2++) {
+          const cross = segCross(
+            e1.points[s1],
+            e1.points[s1 + 1],
+            e2.points[s2],
+            e2.points[s2 + 1]
+          );
+          if (!cross) continue;
+          const [a, b] = e1.id < e2.id ? [e1.id, e2.id] : [e2.id, e1.id];
+          const key2 = `${a}|${b}|${cross.x}|${cross.y}`;
+          if (seen.has(key2)) continue;
+          seen.add(key2);
+          hits.push({ a, b, x: cross.x, y: cross.y, spine: e1.onSpine || e2.onSpine });
+        }
+      }
+    }
+  }
+  return hits;
+}
+
 // src/place.ts
 function isLayeringEdge(e, docIds) {
   if (e.fromPool || e.toPool) return false;
@@ -2415,6 +2733,45 @@ function assignRows({ g, col, docIds, nodeById }) {
     laneRows.set(lane.id, Math.max(0, ...rows) + 1);
   }
   return { row, laneRows, reserved };
+}
+function* localPlacementCandidates(g, p, geometry) {
+  const nodes = new Map(g.nodes.map((n) => [n.id, n]));
+  const edges = new Map(geometry.edges.map((e) => [e.id, e]));
+  const hits = rawHits(geometry.edges);
+  const swappedLanes = /* @__PURE__ */ new Set();
+  let count = 0;
+  for (const hit of hits) {
+    const a = edges.get(hit.a), b = edges.get(hit.b);
+    const u = nodes.get(a.from), v = nodes.get(b.from);
+    if (a.kind !== "seq" || b.kind !== "seq" || !u || !v || u.lane !== v.lane || u.id === v.id || swappedLanes.has(u.lane)) continue;
+    const parents = new Set(g.edges.filter((e) => e.kind === "seq" && e.to === u.id).map((e) => e.from));
+    if (!g.edges.some((e) => e.kind === "seq" && e.to === v.id && parents.has(e.from))) continue;
+    if (p.col.get(u.id) !== p.col.get(v.id) || p.row.get(u.id) === p.row.get(v.id) || [u, v].some((n) => isAttachedBoundary(n) || g.nodes.some((other) => other.attachedTo === n.id))) continue;
+    swappedLanes.add(u.lane);
+    const row = new Map(p.row);
+    row.set(u.id, p.row.get(v.id));
+    row.set(v.id, p.row.get(u.id));
+    yield { ...p, row };
+    if (++count >= 2) return;
+  }
+  const swapped = /* @__PURE__ */ new Set();
+  for (const hit of hits) {
+    const a = edges.get(hit.a), b = edges.get(hit.b);
+    if (a.kind !== "assoc" || b.kind !== "assoc") continue;
+    const docs = [a, b].map((e) => [nodes.get(e.from), nodes.get(e.to)].find((n) => n?.kind === "doc"));
+    const [u, v] = docs;
+    if (!u || !v || u.id === v.id || u.lane !== v.lane || p.col.get(u.id) !== p.col.get(v.id) || p.row.get(u.id) === p.row.get(v.id)) continue;
+    const key2 = [u.id, v.id].sort().join(":");
+    if (swapped.has(key2)) continue;
+    const col = p.col.get(u.id);
+    if (![u, v].every((n) => p.reserved.get(n.lane)?.some((r) => r.row === p.row.get(n.id) && r.c0 === col && r.c1 === col))) continue;
+    swapped.add(key2);
+    const row = new Map(p.row);
+    row.set(u.id, p.row.get(v.id));
+    row.set(v.id, p.row.get(u.id));
+    yield { ...p, row };
+    if (++count >= 2) return;
+  }
 }
 
 // src/route/context.ts
@@ -4560,293 +4917,58 @@ function overlayBoundaryEvents(g, nodeGeom) {
   }
 }
 
-// src/wire.ts
-function wire(g, rp, co, orientation = "horizontal", titleShift = 0) {
-  const vertical = orientation === "vertical";
-  const edgeById = new Map(g.edges.map((e) => [e.id, e]));
-  const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
-  const siblingIndex = /* @__PURE__ */ new Map();
-  const siblingCount = /* @__PURE__ */ new Map();
-  for (const plan of rp.plans) {
-    const e = edgeById.get(plan.edgeId);
-    if (!e.label) continue;
-    const key2 = `${e.from}:${plan.fromSide}`;
-    siblingIndex.set(e.id, siblingCount.get(key2) ?? 0);
-    siblingCount.set(key2, (siblingCount.get(key2) ?? 0) + 1);
+// src/node-labels.ts
+function externalNodeLabel(n) {
+  if (["task", "note", "group"].includes(n.kind) || n.labelLines.length === 0) return void 0;
+  const w = Math.max(...n.labelLines.map((line) => measureText(line, OUT_LABEL_FONT)));
+  const h = n.labelLines.length * OUT_LABEL_LINE_H;
+  let x, y, anchor;
+  if (n.kind === "xor" || n.kind === "and") {
+    x = n.cx - 8;
+    y = n.y - 6 - h;
+    anchor = "end";
+  } else if (n.kind === "doc" || n.kind === "store") {
+    x = n.cx + 6;
+    y = n.y + n.h + 4;
+    anchor = "start";
+  } else if (n.labelSide === "left" || n.labelSide === "right") {
+    x = n.labelSide === "left" ? n.x - 6 : n.x + n.w + 6;
+    y = n.cy + (n.labelShift ?? 0) - h / 2;
+    anchor = n.labelSide === "left" ? "end" : "start";
+  } else {
+    x = n.cx;
+    y = n.labelSide === "top" ? n.y - 6 - h : n.y + n.h + 6;
+    anchor = "middle";
   }
-  const out = [];
-  for (const plan of rp.plans) {
-    const e = edgeById.get(plan.edgeId);
-    const resolved = plan.points.map((sp) => resolve(sp, co, rp));
-    if (!e.fromPool && resolved.length > 1) {
-      resolved[0] = clipToShape(resolved[0], co.nodeGeom.get(e.from), plan.fromSide);
-    }
-    if (!e.toPool && resolved.length > 1) {
-      const last = resolved.length - 1;
-      resolved[last] = clipToShape(resolved[last], co.nodeGeom.get(e.to), plan.toSide);
-    }
-    const logical = simplify(resolved);
-    const pts = vertical ? logical.map((p) => ({ x: p.y, y: p.x + titleShift })) : logical;
-    out.push({
-      id: e.id,
-      kind: e.kind,
-      from: e.from,
-      to: e.to,
-      label: e.label,
-      fromPool: e.fromPool,
-      toPool: e.toPool,
-      points: pts,
-      labelPos: e.label ? labelPos(
-        pts,
-        e.label,
-        e.isReturn,
-        siblingIndex.get(e.id) ?? 0,
-        isGatewayKind(nodeById.get(e.from)?.kind ?? "task") && !e.onSpine,
-        vertical,
-        e.kind === "msg"
-      ) : void 0,
-      onSpine: e.onSpine,
-      isReturn: e.isReturn,
-      provisional: e.provisional,
-      mainHint: e.mainHint,
-      returnHint: e.returnHint,
-      isDefault: e.isDefault,
-      isConditional: e.isConditional,
-      assocKind: e.assocKind
-    });
-  }
-  return out;
+  return { x, anchor, box: { x: x - (anchor === "end" ? w : anchor === "middle" ? w / 2 : 0), y, w, h } };
 }
-function clipToShape(p, n, side) {
-  const dx = p.x - n.cx;
-  const dy = p.y - n.cy;
-  if (isEventKind(n.kind)) {
-    const rx = n.w / 2;
-    const ry = n.h / 2;
-    if (side === "left" || side === "right") {
-      const x = rx * Math.sqrt(Math.max(0, 1 - dy * dy / (ry * ry)));
-      return { x: n.cx + (side === "right" ? x : -x), y: p.y };
-    }
-    const y = ry * Math.sqrt(Math.max(0, 1 - dx * dx / (rx * rx)));
-    return { x: p.x, y: n.cy + (side === "bottom" ? y : -y) };
-  }
-  if (isGatewayKind(n.kind)) {
-    const hw = n.w / 2;
-    const hh = n.h / 2;
-    if (side === "left" || side === "right") {
-      const x = hw * Math.max(0, 1 - Math.abs(dy) / hh);
-      return { x: n.cx + (side === "right" ? x : -x), y: p.y };
-    }
-    const y = hh * Math.max(0, 1 - Math.abs(dx) / hw);
-    return { x: p.x, y: n.cy + (side === "bottom" ? y : -y) };
-  }
-  return p;
+function nodeObstacles(n) {
+  const label = externalNodeLabel(n);
+  return [{ x: n.x, y: n.y, w: n.w, h: n.h }, ...label ? [label.box] : []];
 }
-function resolve(sp, co, rp) {
-  const laneG = (id) => co.lanes.find((l) => l.id === id);
-  let x;
-  switch (sp.x.t) {
-    case "portX":
-      x = co.portPt(sp.x.id, sp.x.side).x;
-      break;
-    case "gutter":
-      x = co.gutterX(sp.x.g, sp.x.side, rp.gutterRunTrack.get(sp.x.run) ?? 0);
-      break;
-    case "nodeCX":
-      x = co.nodeGeom.get(sp.x.id).cx + (sp.x.offset ?? 0);
-      break;
-  }
-  let y;
-  switch (sp.y.t) {
-    case "portY":
-      y = co.portPt(sp.y.id, sp.y.side).y;
-      break;
-    case "nodeCY":
-      y = co.nodeGeom.get(sp.y.id).cy + (sp.y.offset ?? 0);
-      break;
-    case "portStubY": {
-      const py = co.portPt(sp.y.id, sp.y.side).y;
-      y = py + (sp.y.side === "bottom" ? sp.y.offset : -sp.y.offset);
-      break;
-    }
-    case "channel":
-      y = co.channelY(sp.y.lane, sp.y.row, rp.channelRunTrack.get(sp.y.run) ?? 0);
-      break;
-    case "poolChannel":
-      y = co.poolChannelY(sp.y.gap, rp.poolGapRunTrack.get(sp.y.run) ?? 0);
-      break;
-    case "rowMid":
-      y = co.rowMid.get(`${sp.y.lane}:${sp.y.row}`);
-      break;
-    case "laneEdge": {
-      const lg = laneG(sp.y.lane);
-      y = sp.y.edge === "top" ? lg.y : lg.y + lg.h;
-      break;
-    }
-  }
-  return { x, y };
+function segmentLabelHit(a, b, box) {
+  const loX = Math.max(Math.min(a.x, b.x), box.x), hiX = Math.min(Math.max(a.x, b.x), box.x + box.w);
+  const loY = Math.max(Math.min(a.y, b.y), box.y), hiY = Math.min(Math.max(a.y, b.y), box.y + box.h);
+  if (a.y === b.y && a.y > box.y && a.y < box.y + box.h && hiX > loX) return { x: (loX + hiX) / 2, y: a.y };
+  if (a.x === b.x && a.x > box.x && a.x < box.x + box.w && hiY > loY) return { x: a.x, y: (loY + hiY) / 2 };
+  return void 0;
 }
-function simplify(pts) {
-  const dedup = [];
-  for (const p of pts) {
-    const last = dedup[dedup.length - 1];
-    if (last && Math.abs(last.x - p.x) < 0.01 && Math.abs(last.y - p.y) < 0.01) continue;
-    dedup.push(p);
-  }
-  const out = [];
-  for (let i = 0; i < dedup.length; i++) {
-    const a = out[out.length - 1];
-    const b = dedup[i];
-    const c = dedup[i + 1];
-    if (a && c && (a.x === b.x && b.x === c.x || a.y === b.y && b.y === c.y)) continue;
-    out.push(b);
-  }
-  return out;
-}
-var HOP_MARGIN = 12;
-var CROSS_EPS = 4;
-function computeHops(edges) {
+function inspectNodeLabelRoutes(g) {
+  const labels = g.nodes.flatMap((n) => {
+    const label = externalNodeLabel(n);
+    return label ? [{ id: n.id, box: label.box }] : [];
+  });
   const hits = [];
-  for (let i = 0; i < edges.length; i++) {
-    for (let j = i + 1; j < edges.length; j++) {
-      const e1 = edges[i];
-      const e2 = edges[j];
-      for (let s1 = 0; s1 + 1 < e1.points.length; s1++) {
-        for (let s2 = 0; s2 + 1 < e2.points.length; s2++) {
-          const cross = segCross(e1.points[s1], e1.points[s1 + 1], e2.points[s2], e2.points[s2 + 1]);
-          if (!cross) continue;
-          const h1 = Math.abs(e1.points[s1].y - e1.points[s1 + 1].y) < 0.01;
-          hits.push({ e: e1, seg: s1, horizontal: h1, a: e1.points[s1], b: e1.points[s1 + 1], x: cross.x, y: cross.y });
-          hits.push({ e: e2, seg: s2, horizontal: !h1, a: e2.points[s2], b: e2.points[s2 + 1], x: cross.x, y: cross.y });
-        }
+  for (const edge of g.edges) for (const label of labels) {
+    for (let i = 0; i + 1 < edge.points.length; i++) {
+      const point = segmentLabelHit(edge.points[i], edge.points[i + 1], label.box);
+      if (point) {
+        hits.push({ edgeId: edge.id, nodeId: label.id, segment: i, point });
+        break;
       }
     }
   }
-  const byPoint = /* @__PURE__ */ new Map();
-  for (const hit of hits) {
-    const key2 = `${hit.x},${hit.y}`;
-    const list = byPoint.get(key2) ?? [];
-    list.push(hit);
-    byPoint.set(key2, list);
-  }
-  for (const group2 of byPoint.values()) {
-    const x = group2[0].x;
-    const y = group2[0].y;
-    const bundles = /* @__PURE__ */ new Map();
-    for (const hit of group2) {
-      const bkey = `${hit.horizontal ? "h" : "v"}:${hit.horizontal ? hit.a.y : hit.a.x}`;
-      const list = bundles.get(bkey) ?? [];
-      if (!list.some((h) => h.e === hit.e && h.seg === hit.seg)) list.push(hit);
-      bundles.set(bkey, list);
-    }
-    const all = [...bundles.values()];
-    const hasSpine = (b) => b.some((h) => h.e.onSpine);
-    const canHop = (b) => b.some((h) => !h.e.onSpine && hopEndClear(h, x, y));
-    let hoppers;
-    if (all.some(hasSpine)) hoppers = all.filter((b) => !hasSpine(b));
-    else {
-      const horiz = all.filter((b) => b[0].horizontal);
-      hoppers = horiz.length > 0 ? horiz : all;
-    }
-    if (!hoppers.some(canHop)) {
-      const other = all.filter((b) => !hoppers.includes(b));
-      if (other.some(canHop)) hoppers = other;
-      else continue;
-    }
-    const seen = /* @__PURE__ */ new Set();
-    for (const bundle of hoppers) {
-      for (const hit of bundle) {
-        if (hit.e.onSpine || !hopEndClear(hit, x, y)) continue;
-        const id = `${hit.e.id}:${hit.seg}:${x}:${y}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        (hit.e.hops ??= []).push({ seg: hit.seg, x, y });
-      }
-    }
-  }
-}
-function hopEndClear(hit, x, y) {
-  const dist = hit.horizontal ? Math.min(Math.abs(x - hit.a.x), Math.abs(x - hit.b.x)) : Math.min(Math.abs(y - hit.a.y), Math.abs(y - hit.b.y));
-  return dist >= HOP_MARGIN;
-}
-function segCross(a1, a2, b1, b2) {
-  const aH = Math.abs(a1.y - a2.y) < 0.01;
-  const bH = Math.abs(b1.y - b2.y) < 0.01;
-  if (aH === bH) return null;
-  const [h1, h2, v1, v2] = aH ? [a1, a2, b1, b2] : [b1, b2, a1, a2];
-  const x = v1.x;
-  const y = h1.y;
-  const [hx0, hx1] = h1.x < h2.x ? [h1.x, h2.x] : [h2.x, h1.x];
-  const [vy0, vy1] = v1.y < v2.y ? [v1.y, v2.y] : [v2.y, v1.y];
-  if (x < hx0 + CROSS_EPS || x > hx1 - CROSS_EPS) return null;
-  if (y < vy0 + CROSS_EPS || y > vy1 - CROSS_EPS) return null;
-  return { x, y };
-}
-function labelPos(pts, label, isReturn, sibling, preferBranchSeg, vertical = false, sourceFirst = false) {
-  const w = measureText(label, EDGE_FONT_SIZE);
-  const a = pts[0];
-  const b = pts[1] ?? a;
-  const stack = (base) => sibling === 0 ? base : { x: base.x, y: base.y + (EDGE_FONT_SIZE + 11) + (sibling - 1) * (EDGE_FONT_SIZE + 5) };
-  const isV = (p, q) => Math.abs(p.x - q.x) < 0.01;
-  const isH = (p, q) => Math.abs(p.y - q.y) < 0.01;
-  if (vertical) {
-    if (!isReturn && isV(a, b) && Math.abs(b.y - a.y) >= 24) {
-      return stack({ x: a.x + 8, y: a.y + (b.y > a.y ? 10 : -10 - EDGE_FONT_SIZE) });
-    }
-    if (!isReturn && preferBranchSeg) {
-      for (let i = 0; i + 1 < pts.length; i++) {
-        const p = pts[i];
-        const q = pts[i + 1];
-        if (isH(p, q) && Math.abs(q.x - p.x) >= 16) {
-          const x = q.x > p.x ? p.x + 6 : p.x - 6 - w;
-          return { x, y: p.y - 6 - EDGE_FONT_SIZE };
-        }
-      }
-    }
-    if (!isReturn && sourceFirst && isH(a, b) && Math.abs(b.x - a.x) >= w + 12) {
-      const x = b.x > a.x ? a.x + 6 : a.x - 6 - w;
-      return stack({ x, y: a.y - 6 - EDGE_FONT_SIZE });
-    }
-    const minDy = isReturn ? 36 : 24;
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const p = pts[i];
-      const q = pts[i + 1];
-      if (isV(p, q) && Math.abs(q.y - p.y) >= minDy) {
-        return stack({ x: p.x + 8, y: p.y + (q.y > p.y ? 6 : -6 - EDGE_FONT_SIZE) });
-      }
-    }
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const p = pts[i];
-      const q = pts[i + 1];
-      if (isH(p, q) && Math.abs(q.x - p.x) >= 16) {
-        const x = q.x > p.x ? p.x + 6 : p.x - 6 - w;
-        return stack({ x, y: p.y - 6 - EDGE_FONT_SIZE });
-      }
-    }
-    return stack({ x: a.x + 6, y: Math.min(a.y, b.y) - 6 - EDGE_FONT_SIZE });
-  }
-  if (!isReturn && isV(a, b) && Math.abs(b.y - a.y) >= 24) {
-    return stack({ x: a.x + 8, y: a.y + (b.y > a.y ? 10 : -10 - EDGE_FONT_SIZE) });
-  }
-  if (!isReturn && preferBranchSeg) {
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const p = pts[i];
-      const q = pts[i + 1];
-      if (isV(p, q) && Math.abs(q.y - p.y) >= 16) {
-        return { x: p.x + 8, y: p.y + Math.sign(q.y - p.y) * 10 - EDGE_FONT_SIZE / 2 };
-      }
-    }
-  }
-  const minDx = isReturn ? 36 : 16;
-  for (let i = 0; i + 1 < pts.length; i++) {
-    const p = pts[i];
-    const q = pts[i + 1];
-    if (isH(p, q) && Math.abs(q.x - p.x) >= minDx) {
-      const x = q.x > p.x ? p.x + 6 : p.x - 6 - w;
-      return stack({ x, y: p.y - 6 - EDGE_FONT_SIZE });
-    }
-  }
-  return stack({ x: Math.min(a.x, b.x) + 6, y: a.y - 6 - EDGE_FONT_SIZE });
+  return hits;
 }
 
 // src/edge-labels.ts
@@ -4976,26 +5098,6 @@ function inspectEdgeLabels(geometry) {
     if (other < own + AMBIG_GAP) ambiguous++;
   }
   return { nodeHits, edgeHits, labelHits, stolen, ambiguous, details };
-}
-function nodeObstacles(n) {
-  const out = [{ x: n.x, y: n.y, w: n.w, h: n.h }];
-  if (n.kind === "task" || n.kind === "note" || n.kind === "group" || n.labelLines.length === 0) return out;
-  const labelW = Math.max(...n.labelLines.map((line) => measureText(line, OUT_LABEL_FONT)));
-  const labelH = n.labelLines.length * OUT_LABEL_LINE_H;
-  if (n.kind === "xor" || n.kind === "and") {
-    out.push({ x: n.cx - 8 - labelW, y: n.y - 6 - labelH, w: labelW, h: labelH });
-  } else if (n.kind === "doc" || n.kind === "store") {
-    out.push({ x: n.cx + 6, y: n.y + n.h + 4, w: labelW, h: labelH });
-  } else if (n.labelSide === "left") {
-    out.push({ x: n.x - 6 - labelW, y: n.cy - labelH / 2, w: labelW, h: labelH });
-  } else if (n.labelSide === "right") {
-    out.push({ x: n.x + n.w + 6, y: n.cy + (n.labelShift ?? 0) - labelH / 2, w: labelW, h: labelH });
-  } else if (n.labelSide === "top") {
-    out.push({ x: n.cx - labelW / 2, y: n.y - 6 - labelH, w: labelW, h: labelH });
-  } else {
-    out.push({ x: n.cx + (n.labelShift ?? 0) - labelW / 2, y: n.y + n.h + 6, w: labelW, h: labelH });
-  }
-  return out;
 }
 function prefixLength(pts, seg) {
   let n = 0;
@@ -5174,6 +5276,13 @@ function compareScore(a, b) {
 
 // src/oracle.ts
 var EPS = 0.5;
+function checkNodeLabelRoutes(geometry) {
+  return inspectNodeLabelRoutes(geometry).map((hit) => ({
+    level: "warning",
+    code: "W-436",
+    message: `\u8FBA ${hit.edgeId} \u304C\u5916\u90E8\u30E9\u30D9\u30EB ${hit.nodeId} \u3092\u6A2A\u5207\u308B (segment=${hit.segment}, x=${hit.point.x}, y=${hit.point.y})`
+  }));
+}
 function checkOracle(g, geo) {
   const out = [];
   const vertical = geo.orientation === "vertical";
@@ -5590,7 +5699,7 @@ function scoreOf(g, geometry) {
   let raw = 0;
   let spine = 0;
   for (const e of geometry.edges) hops += e.hops?.length ?? 0;
-  for (const hit of rawHits(geometry.edges)) {
+  for (const hit of rawHits2(geometry.edges)) {
     raw++;
     if (hit.spine) spine++;
   }
@@ -5610,7 +5719,7 @@ function cheapScore(edges) {
   let raw = 0;
   let spine = 0;
   for (const e of edges) hops += e.hops?.length ?? 0;
-  for (const hit of rawHits(edges)) {
+  for (const hit of rawHits2(edges)) {
     raw++;
     if (hit.spine) spine++;
   }
@@ -5642,7 +5751,7 @@ function nextGapFlip(current, tried) {
 function crossingPairs(edges) {
   const pairs = [];
   const seen = /* @__PURE__ */ new Set();
-  for (const hit of rawHits(edges)) {
+  for (const hit of rawHits2(edges)) {
     const [a, b] = hit.a < hit.b ? [hit.a, hit.b] : [hit.b, hit.a];
     const key2 = `${a}|${b}`;
     if (seen.has(key2)) continue;
@@ -5652,7 +5761,7 @@ function crossingPairs(edges) {
   pairs.sort((p, q) => p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : p[1] < q[1] ? -1 : p[1] > q[1] ? 1 : 0);
   return pairs;
 }
-function rawHits(edges) {
+function rawHits2(edges) {
   const hits = [];
   for (let i = 0; i < edges.length; i++) {
     for (let j = i + 1; j < edges.length; j++) {
@@ -5892,9 +6001,105 @@ function improveDataAssociationsOnce(geometry) {
   }
   return changed ? { ...geometry, edges } : geometry;
 }
+function* connectedRouteCandidates(geometry) {
+  const eligible = geometry.edges.filter((e) => e.kind === "seq" || e.kind === "assoc" && (!e.assocKind || e.assocKind === "data"));
+  const hits = rawHits(geometry.edges);
+  const labelHits = new Set(inspectNodeLabelRoutes(geometry).map((h) => h.edgeId));
+  const groups = [];
+  for (const node of geometry.nodes) {
+    const inputs = eligible.filter((e) => e.to === node.id);
+    const ids = new Set(inputs.map((e) => e.id));
+    if (node.kind === "task" && inputs.length >= 2 && inputs.length <= 4 && inputs.some((e) => e.kind === "seq") && inputs.some((e) => e.kind === "assoc") && (hits.some((h) => ids.has(h.a) || ids.has(h.b)) || inputs.some((e) => labelHits.has(e.id)))) {
+      groups.push({ node, endpoint: "to", edges: inputs });
+    }
+    const outputs = eligible.filter((e) => e.kind === "seq" && e.from === node.id);
+    if (isGatewayKind(node.kind) && outputs.length === 2 && outputs.some((a, i) => outputs.slice(i + 1).some((b) => sharedPair(a, b) > 0))) {
+      groups.push({ node, endpoint: "from", edges: outputs });
+    }
+  }
+  for (const { node, endpoint, edges: group2 } of groups.slice(0, 3)) {
+    const focus = new Set(group2.map((e) => e.id));
+    const fixed = geometry.edges.filter((e) => !focus.has(e.id));
+    const candidates = group2.map((edge) => {
+      const ports = ["left", "right", "top", "bottom"].map((side) => {
+        const horizontal = side === "left" || side === "right";
+        const axis = horizontal ? "cy" : "cx";
+        const ordered = [...group2].sort((a, b) => {
+          const peerA = geometry.nodes.find((n) => n.id === a[endpoint === "to" ? "from" : "to"]);
+          const peerB = geometry.nodes.find((n) => n.id === b[endpoint === "to" ? "from" : "to"]);
+          const other = horizontal ? "cx" : "cy";
+          const tieDirection = side === "left" || side === "top" ? -1 : 1;
+          return peerA[axis] - peerB[axis] || tieDirection * (peerA[other] - peerB[other]) || a.id.localeCompare(b.id);
+        });
+        const span = horizontal ? node.h : node.w;
+        const gap = Math.min(16, (span - 2 * CORNER) / (group2.length - 1));
+        const offset = isGatewayKind(node.kind) ? 0 : (ordered.indexOf(edge) - (group2.length - 1) / 2) * gap;
+        return sidePort(node, side, (horizontal ? node.cy : node.cx) + offset);
+      });
+      const paths = endpoint === "from" ? shortPortPaths(geometry, edge, fixed, ports) : shortestPaths(geometry, edge, fixed, { targets: ports, limit: 6, local: true });
+      return [edge.points, ...paths];
+    });
+    let worlds = [{ choices: group2.map(() => 0), cost: worldScore(geometry.edges, geometry) }];
+    for (let i = 0; i < group2.length; i++) {
+      const next = [];
+      for (const world of worlds) for (let choice = 0; choice < candidates[i].length; choice++) {
+        const choices = [...world.choices];
+        choices[i] = choice;
+        next.push({ choices, cost: worldScore(applyChoices(geometry.edges, group2, candidates, choices), geometry) });
+      }
+      next.sort((a, b) => compare(a.cost, b.cost) || choiceKey(a.choices).localeCompare(choiceKey(b.choices)));
+      worlds = next.slice(0, BEAM_WIDTH);
+    }
+    for (const world of worlds) {
+      const edges = applyChoices(geometry.edges, group2, candidates, world.choices).map((e) => ({ ...e, hops: void 0 }));
+      yield { ...geometry, edges };
+    }
+  }
+}
+function shortPortPaths(geometry, edge, fixed, sources) {
+  const target = geometry.nodes.find((n) => n.id === edge.to);
+  if (!target) return [];
+  const options = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const source of sources) for (const end of boundaryRayPorts(target)) {
+    for (const elbow of [{ x: source.stub.x, y: end.stub.y }, { x: end.stub.x, y: source.stub.y }]) {
+      const path = simplify([source.point, source.stub, elbow, end.stub, end.point]);
+      if (path.length < 2 || seen.has(pathKey(path))) continue;
+      seen.add(pathKey(path));
+      const cost = score(path, edge, fixed, geometry.nodes);
+      cost[0] += inspectNodeLabelRoutes({ ...geometry, edges: [{ ...edge, points: path }] }).length;
+      const sourceDir = { x: source.stub.x - source.point.x, y: source.stub.y - source.point.y };
+      const first = path[1];
+      if ((first.x - source.point.x) * sourceDir.x + (first.y - source.point.y) * sourceDir.y <= 0) continue;
+      options.push({ path, cost, face: `${source.dir}:${sourceDir.x > 0}:${sourceDir.y > 0}` });
+    }
+  }
+  options.sort((a, b) => compare(a.cost, b.cost) || pathKey(a.path).localeCompare(pathKey(b.path)));
+  const faces = /* @__PURE__ */ new Map();
+  return options.filter((o) => {
+    const count = faces.get(o.face) ?? 0;
+    if (count >= 2 || o.cost[0] > 0) return false;
+    faces.set(o.face, count + 1);
+    return true;
+  }).slice(0, 8).map((o) => o.path);
+}
 function routeCandidates(geometry, edge, others) {
   const out = [edge.points];
   const seen = /* @__PURE__ */ new Set([pathKey(edge.points)]);
+  for (const endpoint of ["from", "to"]) {
+    const node = geometry.nodes.find((n) => n.id === edge[endpoint]);
+    if (!node) continue;
+    const original = edge.points[endpoint === "from" ? 0 : edge.points.length - 1];
+    const side = portSide(node, original);
+    for (const port of boundaryRayPorts(node).filter((p) => portSide(node, p.point) === side)) {
+      for (const path2 of portCandidates(geometry, edge, /* @__PURE__ */ new Map([[endpoint, port.point]]))) addCandidate(out, seen, path2);
+    }
+  }
+  if (inspectNodeLabelRoutes({ ...geometry, edges: [edge] }).length > 0) {
+    const originalCost = score(edge.points, edge, others, geometry.nodes);
+    const safe = out.slice(1).map((path2) => ({ path: path2, cost: score(path2, edge, others, geometry.nodes) })).filter((c) => c.cost[0] === 0 && c.cost[1] <= originalCost[1] && inspectNodeLabelRoutes({ ...geometry, edges: [{ ...edge, points: c.path }] }).length === 0).sort((a, b) => compare(a.cost, b.cost));
+    if (safe.length) return [edge.points, ...safe.slice(0, 3).map((c) => c.path)];
+  }
   const path = shortestPaths(geometry, edge, others)[0];
   if (path) addCandidate(out, seen, path);
   return out;
@@ -5944,28 +6149,39 @@ function addCandidate(out, seen, path) {
   seen.add(key2);
   out.push(path);
 }
-function shortestPaths(geometry, edge, others) {
+function shortestPaths(geometry, edge, others, options = {}) {
   const from = geometry.nodes.find((n) => n.id === edge.from);
   const to = geometry.nodes.find((n) => n.id === edge.to);
   if (!from || !to || from.id === to.id) return [];
-  const rects = geometry.nodes.map(expanded);
-  const sources = boundaryRayPorts(from);
-  const targets = boundaryRayPorts(to);
+  const labelRects = geometry.nodes.flatMap((n) => {
+    const label = externalNodeLabel(n);
+    return label ? [{ x1: label.box.x - 2, y1: label.box.y - 2, x2: label.box.x + label.box.w + 2, y2: label.box.y + label.box.h + 2 }] : [];
+  });
+  const rects = [...geometry.nodes.map(expanded), ...labelRects];
+  const sources = options.sources ?? boundaryRayPorts(from);
+  const targets = options.targets ?? boundaryRayPorts(to);
+  const margin = Math.max(80, from.w, from.h, to.w, to.h);
+  const bounds = {
+    x1: Math.min(from.x, to.x) - margin,
+    x2: Math.max(from.x + from.w, to.x + to.w) + margin,
+    y1: Math.min(from.y, to.y) - margin,
+    y2: Math.max(from.y + from.h, to.y + to.h) + margin
+  };
   const lane = from.lane === to.lane ? geometry.lanes.find((l) => l.id === from.lane) : void 0;
   const inLane = (p) => !lane || (geometry.orientation === "vertical" ? p.x >= lane.x - EPS2 && p.x <= lane.x + lane.w + EPS2 : p.y >= lane.y - EPS2 && p.y <= lane.y + lane.h + EPS2);
-  const usableSources = sources.filter((p) => inLane(p.stub));
-  const usableTargets = targets.filter((p) => inLane(p.stub));
+  const usableSources = sources.filter((p) => inLane(p.stub) && !labelRects.some((r) => blocked(p.point, p.stub, r)));
+  const usableTargets = targets.filter((p) => inLane(p.stub) && !labelRects.some((r) => blocked(p.point, p.stub, r)));
   if (usableSources.length === 0 || usableTargets.length === 0) return [];
   const xs = unique([
     ...rects.flatMap((r) => [r.x1, r.x2]),
     ...usableSources.map((p) => p.stub.x),
     ...usableTargets.map((p) => p.stub.x)
-  ]);
+  ]).filter((x) => !options.local || x >= bounds.x1 && x <= bounds.x2);
   const ys = unique([
     ...rects.flatMap((r) => [r.y1, r.y2]),
     ...usableSources.map((p) => p.stub.y),
     ...usableTargets.map((p) => p.stub.y)
-  ]);
+  ]).filter((y) => !options.local || y >= bounds.y1 && y <= bounds.y2);
   const points = [];
   const byKey = /* @__PURE__ */ new Map();
   for (const y of ys) for (const x of xs) {
@@ -6000,6 +6216,11 @@ function shortestPaths(geometry, edge, others) {
     const v = Math.floor(item.state / 2);
     const dir = item.state % 2;
     for (const next of adjacent[v]) {
+      if (prev[item.state] === -1 && root[item.state] >= 0) {
+        const source = usableSources[root[item.state]];
+        const dx = source.stub.x - source.point.x, dy = source.stub.y - source.point.y;
+        if ((points[next.to].x - points[v].x) * dx + (points[next.to].y - points[v].y) * dy < -EPS2) continue;
+      }
       const seg = segmentCost(points[v], points[next.to], edge, others);
       if (dir !== next.dir) seg[5]++;
       const cost = add(item.cost, seg);
@@ -6028,6 +6249,7 @@ function shortestPaths(geometry, edge, others) {
   }
   finishes.sort((a, b) => compare(a.cost, b.cost) || key(a.target.point).localeCompare(key(b.target.point)) || a.state - b.state);
   const out = [], seen = /* @__PURE__ */ new Set();
+  const faces = /* @__PURE__ */ new Set();
   for (const finish of finishes) {
     if (root[finish.state] < 0) continue;
     const grid = [];
@@ -6039,9 +6261,12 @@ function shortestPaths(geometry, edge, others) {
     const path = simplify([usableSources[root[finish.state]].point, ...grid, finish.target.point]);
     const pathId = pathKey(path);
     if (seen.has(pathId)) continue;
+    const face = `${portSide(from, path[0])}:${portSide(to, path.at(-1))}`;
+    if ((options.limit ?? 1) > 1 && faces.has(face)) continue;
+    faces.add(face);
     seen.add(pathId);
     out.push(path);
-    break;
+    if (out.length >= (options.limit ?? 1)) break;
   }
   return out;
 }
@@ -6060,7 +6285,7 @@ function boundaryRayPorts(node) {
 function sidePort(node, side, at) {
   at = Math.round(at * 100) / 100;
   const r = isEventKind(node.kind) ? node.w / 2 : 0;
-  const inset = (off) => r > 0 ? r - Math.sqrt(Math.max(0, r * r - off * off)) : 0;
+  const inset = (off) => isGatewayKind(node.kind) ? Math.abs(off) : r > 0 ? r - Math.sqrt(Math.max(0, r * r - off * off)) : 0;
   if (side === "left") {
     const x = node.x + inset(at - node.cy);
     return { point: { x, y: at }, stub: { x: node.x - PORT_STEM, y: at }, dir: 0 };
@@ -6110,6 +6335,10 @@ function conflictComponents(edges, nodes) {
   const gridEdges = /* @__PURE__ */ new Set();
   const assignedPorts = /* @__PURE__ */ new Map();
   const links = new Map(eligible.map((e) => [e.id, /* @__PURE__ */ new Set()]));
+  for (const hit of inspectNodeLabelRoutes({ nodes, edges: eligible })) {
+    active.add(hit.edgeId);
+    gridEdges.add(hit.edgeId);
+  }
   const link = (a, b, needsGrid = false) => {
     active.add(a.id);
     active.add(b.id);
@@ -6208,7 +6437,7 @@ function applyChoices(edges, group2, candidates, choices) {
   const picked = new Map(group2.map((edge, i) => [edge.id, candidates[i][choices[i]]]));
   return edges.map((edge) => {
     const points = picked.get(edge.id);
-    return points ? { ...edge, points, labelPos: void 0, hops: void 0 } : edge;
+    return points ? { ...edge, points, labelPos: edge.labelPos && { ...edge.labelPos }, hops: void 0 } : edge;
   });
 }
 function worldScore(edges, geometry, focus) {
@@ -6219,6 +6448,7 @@ function worldScore(edges, geometry, focus) {
     for (let i = 0; i < total.length; i++) total[i] = total[i] + part[i];
   }
   total[2] = portOrderPenalty(edges, geometry.nodes);
+  total[0] += inspectNodeLabelRoutes({ ...geometry, edges }).length;
   total[5] = visualAppearancePenalty({ ...geometry, edges }) * 1e3 + total[5];
   return total;
 }
@@ -6306,7 +6536,7 @@ function preferredSide(node, peer) {
   return Math.abs(dx) >= Math.abs(dy) ? dx >= 0 ? "right" : "left" : dy >= 0 ? "bottom" : "top";
 }
 function portSide(node, p) {
-  if (isEventKind(node.kind)) {
+  if (isEventKind(node.kind) || isGatewayKind(node.kind)) {
     const dx = p.x - node.cx, dy = p.y - node.cy;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return void 0;
     return Math.abs(dx) >= Math.abs(dy) ? dx >= 0 ? "right" : "left" : dy >= 0 ? "bottom" : "top";
@@ -6866,11 +7096,7 @@ function renderNode(n, emphasized) {
       `<path d="M ${cx} ${cy - h} L ${cx + h} ${cy} L ${cx} ${cy + h} L ${cx - h} ${cy} Z" fill="${C.nodeFill}" stroke="${stroke}" stroke-width="${sw}"${dash2}/>`
     );
     out.push(gatewayInner(n, stroke));
-    const totalH2 = n.labelLines.length * OUT_LABEL_LINE_H;
-    n.labelLines.forEach((line, i) => {
-      const y = n.y - 6 - totalH2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, n.cx - 8, y, OUT_LABEL_FONT, C.subText, "end", 400, true, true));
-    });
+    out.push(renderExternalNodeLabel(n));
     return out.join("\n");
   }
   const dash = n.provisional ? ' stroke-dasharray="5 3"' : "";
@@ -6882,10 +7108,7 @@ function renderNode(n, emphasized) {
       `<ellipse cx="${n.cx}" cy="${y + ry}" rx="${w / 2}" ry="${ry}" fill="${C.nodeFill}" stroke="${stroke}" stroke-width="${sw}"${dash}/>`,
       `<path d="M ${x} ${y + ry + 5} A ${w / 2} ${ry} 0 0 0 ${x + w} ${y + ry + 5}" fill="none" stroke="${stroke}" stroke-width="1"/>`
     );
-    n.labelLines.forEach((line, i) => {
-      const ly = n.y + n.h + 4 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, n.cx + 6, ly, OUT_LABEL_FONT, C.subText, "start", 400, true, true));
-    });
+    out.push(renderExternalNodeLabel(n));
     return out.join("\n");
   }
   if (n.kind === "note") {
@@ -6931,10 +7154,7 @@ function renderNode(n, emphasized) {
       );
       out.push(dataObjectExtras({ ...n, h: bodyH }, stroke));
     }
-    n.labelLines.forEach((line, i) => {
-      const ly = n.y + n.h + 4 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, n.cx + 6, ly, OUT_LABEL_FONT, C.subText, "start", 400, true, true));
-    });
+    out.push(renderExternalNodeLabel(n));
     return out.join("\n");
   }
   const r = n.w / 2;
@@ -6948,20 +7168,23 @@ function renderNode(n, emphasized) {
     out.push(`<circle cx="${n.cx}" cy="${n.cy}" r="${r - 4}" fill="none" stroke="${stroke}" stroke-width="1.2"${eventDash}/>`);
   }
   out.push(eventMarkerGroup(n, stroke));
-  const totalH = n.labelLines.length * OUT_LABEL_LINE_H;
-  if (n.labelSide === "left" || n.labelSide === "right") {
-    const lx = n.labelSide === "left" ? n.x - 6 : n.x + n.w + 6;
-    n.labelLines.forEach((line, i) => {
-      const y = n.cy + (n.labelShift ?? 0) - totalH / 2 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-      out.push(text(line, lx, y, OUT_LABEL_FONT, C.subText, n.labelSide === "left" ? "end" : "start", 400, true, true));
-    });
-    return out.join("\n");
-  }
-  n.labelLines.forEach((line, i) => {
-    const y = n.labelSide === "top" ? n.y - 6 - totalH + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2 : n.y + n.h + 6 + i * OUT_LABEL_LINE_H + OUT_LABEL_LINE_H / 2;
-    out.push(text(line, n.cx, y, OUT_LABEL_FONT, C.subText, "middle", 400, true, true));
-  });
+  out.push(renderExternalNodeLabel(n));
   return out.join("\n");
+}
+function renderExternalNodeLabel(n) {
+  const label = externalNodeLabel(n);
+  if (!label) return "";
+  return n.labelLines.map((line, i) => text(
+    line,
+    label.x,
+    label.box.y + (i + 0.5) * OUT_LABEL_LINE_H,
+    OUT_LABEL_FONT,
+    C.subText,
+    label.anchor,
+    400,
+    true,
+    true
+  )).join("\n");
 }
 var ARROW_L = 9;
 var ARROW_W = 7;
@@ -7136,14 +7359,14 @@ function compile(source, opts = {}) {
   const placement = place(normalized);
   const cellsL = vertical ? transposeCells(cells2) : cells2;
   const titleShift = vertical && normalized.title ? TITLE_H : 0;
-  const assemble = (plan) => {
+  const assemble = (plan, candidatePlacement = placement) => {
     const planL = vertical ? {
       ...plan,
       gutterLabelNeed: new Map(
         [...plan.gutterLabelNeed].map(([gi, w]) => [gi, Math.min(w, VERT_GUTTER_LABEL_NEED)])
       )
     } : plan;
-    const coords = computeCoords(normalized, placement, cellsL, planL, !vertical);
+    const coords = computeCoords(normalized, candidatePlacement, cellsL, planL, !vertical);
     const edges2 = wire(normalized, planL, coords, orientation, titleShift);
     const nodes = normalized.nodes.map((n) => {
       const lg = coords.nodeGeom.get(n.id);
@@ -7176,43 +7399,84 @@ function compile(source, opts = {}) {
     violations: checkOracle(normalized, assembled.geometry),
     labelReport: assembled.labelReport
   });
-  const adopted = /* @__PURE__ */ new Set();
-  let selected = candidateOf("baseline", assemble(route(normalized, placement, false)));
-  const consider = (candidate) => {
-    if (compareScore2(layoutScore(candidate), layoutScore(selected)) < 0) {
-      selected = candidate;
-      adopted.add(candidate.name);
+  const solvePlacement = (candidatePlacement) => {
+    const materialize = (plan) => assemble(plan, candidatePlacement);
+    const adopted2 = /* @__PURE__ */ new Set();
+    let selected2 = candidateOf("baseline", materialize(route(normalized, candidatePlacement, false)));
+    const consider = (candidate) => {
+      if (inspectNodeLabelRoutes(candidate.geometry).length > inspectNodeLabelRoutes(selected2.geometry).length) return;
+      if (compareScore2(layoutScore(candidate), layoutScore(selected2)) < 0) {
+        selected2 = candidate;
+        adopted2.add(candidate.name);
+      }
+    };
+    consider(candidateOf("improved", materialize(route(normalized, candidatePlacement, true))));
+    const readability = adopted2.has("improved");
+    const refinedAssembled = improveRouting(normalized, candidatePlacement, readability, materialize, selected2.assembled);
+    if (refinedAssembled.geometry.edges !== selected2.geometry.edges) consider(candidateOf("refined", refinedAssembled));
+    const oarspGeometry = improveDataAssociations(selected2.geometry);
+    if (oarspGeometry !== selected2.geometry) {
+      computeHops(oarspGeometry.edges);
+      const labelReport = placeEdgeLabels(oarspGeometry);
+      consider(candidateOf("oarsp", { ...selected2.assembled, geometry: oarspGeometry, labelReport }));
     }
+    {
+      const before = selected2;
+      for (const connected of connectedRouteCandidates(before.geometry)) {
+        const geometry2 = { ...connected, edges: connected.edges.map((e, i) => e.points === before.geometry.edges[i].points ? { ...selected2.geometry.edges[i], hops: void 0 } : e) };
+        if (rawHits(geometry2.edges).length > rawHits(selected2.geometry.edges).length) continue;
+        if (checkOracle(normalized, geometry2).length > 0) continue;
+        if (geometry2.edges.some((a, i) => geometry2.edges.slice(i + 1).some((b, j) => sharedPair(a, b) > sharedPair(before.geometry.edges[i], before.geometry.edges[i + 1 + j]) + 0.01))) continue;
+        computeHops(geometry2.edges);
+        const labelReport = placeEdgeLabels(geometry2);
+        if (labelReport.nodeHits > selected2.labelReport.nodeHits || labelReport.edgeHits > selected2.labelReport.edgeHits || labelReport.labelHits > selected2.labelReport.labelHits || labelReport.stolen > selected2.labelReport.stolen || labelReport.ambiguous > selected2.labelReport.ambiguous) continue;
+        consider(candidateOf("connected-routes", { ...selected2.assembled, geometry: geometry2, labelReport }));
+      }
+    }
+    for (let sweep = 0; sweep < 4; sweep++) {
+      const before = selected2;
+      for (const geometry2 of localSequenceCandidates(before.geometry)) {
+        const introducesSharing = geometry2.edges.some((a, i) => geometry2.edges.slice(i + 1).some((b, j) => sharedPair(a, b) > sharedPair(before.geometry.edges[i], before.geometry.edges[i + 1 + j]) + 0.01));
+        if (introducesSharing) continue;
+        const violations = checkOracle(normalized, geometry2);
+        if (violations.length > 0) continue;
+        computeHops(geometry2.edges);
+        const labelReport = placeEdgeLabels(geometry2);
+        if (labelReport.nodeHits > selected2.labelReport.nodeHits || labelReport.edgeHits > selected2.labelReport.edgeHits || labelReport.labelHits > selected2.labelReport.labelHits || labelReport.stolen > selected2.labelReport.stolen || labelReport.ambiguous > selected2.labelReport.ambiguous) continue;
+        consider(candidateOf("local-sequence", { ...selected2.assembled, geometry: geometry2, labelReport }));
+      }
+      if (before === selected2) break;
+    }
+    return { selected: selected2, adopted: adopted2, placement: candidatePlacement };
   };
-  consider(candidateOf("improved", assemble(route(normalized, placement, true))));
-  const readability = adopted.has("improved");
-  const refinedAssembled = improveRouting(normalized, placement, readability, assemble, selected.assembled);
-  if (refinedAssembled.geometry.edges !== selected.geometry.edges) consider(candidateOf("refined", refinedAssembled));
-  const oarspGeometry = improveDataAssociations(selected.geometry);
-  if (oarspGeometry !== selected.geometry) {
-    computeHops(oarspGeometry.edges);
-    const labelReport = placeEdgeLabels(oarspGeometry);
-    consider(candidateOf("oarsp", { ...selected.assembled, geometry: oarspGeometry, labelReport }));
-  }
-  for (let sweep = 0; sweep < 4; sweep++) {
-    const before = selected;
-    for (const geometry2 of localSequenceCandidates(before.geometry)) {
-      const introducesSharing = geometry2.edges.some((a, i) => geometry2.edges.slice(i + 1).some((b, j) => sharedPair(a, b) > sharedPair(before.geometry.edges[i], before.geometry.edges[i + 1 + j]) + 0.01));
-      if (introducesSharing) continue;
-      const violations = checkOracle(normalized, geometry2);
-      if (violations.length > 0) continue;
-      computeHops(geometry2.edges);
-      const labelReport = placeEdgeLabels(geometry2);
-      if (labelReport.nodeHits > selected.labelReport.nodeHits || labelReport.edgeHits > selected.labelReport.edgeHits || labelReport.labelHits > selected.labelReport.labelHits) continue;
-      consider(candidateOf("local-sequence", { ...selected.assembled, geometry: geometry2, labelReport }));
+  let solution = solvePlacement(placement);
+  if (opts.optimizePlacement !== false) {
+    const original = solution;
+    for (const proposed of localPlacementCandidates(normalized, original.placement, original.selected.geometry)) {
+      const candidatePlacement = { ...proposed, row: new Map(proposed.row) };
+      for (const [id, row] of original.placement.row) {
+        if (proposed.row.get(id) === row) candidatePlacement.row.set(id, solution.placement.row.get(id));
+      }
+      const candidate = solvePlacement(candidatePlacement);
+      const old = solution.selected, next = candidate.selected;
+      if (rawHits(next.geometry.edges).length >= rawHits(old.geometry.edges).length || inspectNodeLabelRoutes(next.geometry).length > inspectNodeLabelRoutes(old.geometry).length || next.labelReport.nodeHits > old.labelReport.nodeHits || next.labelReport.edgeHits > old.labelReport.edgeHits || next.labelReport.labelHits > old.labelReport.labelHits || next.labelReport.stolen > old.labelReport.stolen || next.labelReport.ambiguous > old.labelReport.ambiguous || next.geometry.edges.some((a, i) => next.geometry.edges.slice(i + 1).some((b, j) => sharedPair(a, b) > sharedPair(old.geometry.edges[i], old.geometry.edges[i + 1 + j]) + 0.01)) || next.geometry.width * next.geometry.height > old.geometry.width * old.geometry.height * 1.15) continue;
+      if (compareScore2(layoutScore(next), layoutScore(old)) < 0) solution = candidate;
     }
-    if (before === selected) break;
+    if (solution !== original) solution.adopted.add("local-placement");
   }
+  const { selected, adopted } = solution;
   const geometry = selected.geometry;
+  if (adopted.has("local-placement")) {
+    diags.push({ level: "info", code: "N-438", message: "\u6B8B\u5B58\u4EA4\u5DEE\u306E\u5468\u8FBA\u914D\u7F6E\u3092\u518D\u8A55\u4FA1\u3057\u3001\u901A\u8DEF\u30FB\u30DD\u30FC\u30C8\u30FB\u30E9\u30D9\u30EB\u3092\u518D\u751F\u6210" });
+  }
   if (adopted.has("local-sequence")) {
     diags.push({ level: "info", code: "N-435", message: "\u5168\u56F3\u691C\u67FB\u306B\u3088\u308A\u5408\u6D41\u30DD\u30FC\u30C8\u4EA4\u63DB\u30FB\u30B7\u30FC\u30B1\u30F3\u30B9\u77ED\u7D61\u5019\u88DC\u3092\u63A1\u7528" });
   }
+  if (adopted.has("connected-routes")) {
+    diags.push({ level: "info", code: "N-437", message: "\u5168\u56F3\u691C\u67FB\u306B\u3088\u308A\u6DF7\u5728\u5165\u7DDA\u30FB\u5206\u5C90\u51FA\u7DDA\u306E\u63A5\u7D9A\u9762\u3068\u7D4C\u8DEF\u3092\u5171\u540C\u6700\u9069\u5316" });
+  }
   const edges = geometry.edges;
+  diags.push(...checkNodeLabelRoutes(geometry));
   if (adopted.has("improved")) {
     diags.push({ level: "info", code: "N-431", message: "\u5168\u4F53\u53EF\u8AAD\u6027\u30B9\u30B3\u30A2\u306B\u3088\u308A\u6539\u5584\u7D4C\u8DEF\u3092\u63A1\u7528" });
   }
@@ -7224,7 +7488,7 @@ function compile(source, opts = {}) {
   for (const e of normalized.edges) {
     if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
     if (isDocLike(kindOf.get(e.from) ?? "task") || isDocLike(kindOf.get(e.to) ?? "task")) continue;
-    if (e.isReturn && placement.col.get(e.to) >= placement.col.get(e.from)) {
+    if (e.isReturn && solution.placement.col.get(e.to) >= solution.placement.col.get(e.from)) {
       diags.push({
         level: strict2 ? "error" : "warning",
         code: "W-252",
@@ -7275,6 +7539,7 @@ function compile(source, opts = {}) {
 function layoutScore(candidate) {
   const { geometry, violations, labelReport } = candidate;
   let sharedGatewayExits = 0;
+  let sharedGatewayLength = 0;
   let hops = 0;
   let bends = 0;
   let length = 0;
@@ -7298,15 +7563,20 @@ function layoutScore(candidate) {
     if (n.kind !== "xor" && n.kind !== "and") continue;
     const outs = geometry.edges.filter((e) => e.from === n.id && e.kind === "seq");
     if (outs.length !== 2) continue;
-    if (outs[0].points[0].x === outs[1].points[0].x && outs[0].points[0].y === outs[1].points[0].y) {
-      sharedGatewayExits++;
+    for (let i = 0; i < outs.length; i++) for (const other of outs.slice(i + 1)) {
+      const edge = outs[i];
+      sharedGatewayLength += sharedPair(edge, other);
+      if (edge.points[0].x === other.points[0].x && edge.points[0].y === other.points[0].y) sharedGatewayExits++;
     }
   }
   return [
     violations.filter((d) => d.level === "error").length,
-    sharedGatewayExits,
+    inspectNodeLabelRoutes(geometry).length,
     labelReport.nodeHits,
     labelReport.edgeHits + labelReport.labelHits,
+    sharedGatewayExits,
+    sharedGatewayLength,
+    rawHits(geometry.edges).length,
     hops,
     labelReport.stolen,
     labelReport.ambiguous,
@@ -7857,7 +8127,7 @@ if (process.stderr.isTTY) {
 }
 var args = process.argv.slice(2);
 if (args.includes("--version")) {
-  print(process.stdout, "0.2.21");
+  print(process.stdout, "0.2.22");
   process.exit(0);
 }
 if (args[0] === "eval") {
@@ -7878,7 +8148,7 @@ if (args[0] === "eval") {
     reportPath,
     parentId,
     consulting,
-    version: "0.2.21"
+    version: "0.2.22"
   });
   for (const finding of result.findings) {
     const tag = finding.level === "error" ? "ERROR" : finding.level === "warning" ? "WARN " : "info ";
@@ -7904,7 +8174,7 @@ try {
     const directory = mkdtempSync(tmpdir() + "/bpmn-detail-");
     try {
       execFileSync("python3", [fileURLToPath(new URL("./bpmn-detail.py", import.meta.url)), input, directory, input]);
-      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.21");
+      const result2 = detailSheet(directory, verticalDefault ? "vertical" : "horizontal", "0.2.22");
       if (output) {
         mkdirSync(dirname(output), { recursive: true });
         writeFileSync(output, result2.svg);
@@ -7920,7 +8190,7 @@ try {
   const result = compile(source, {
     strict,
     orientation: verticalDefault ? "vertical" : void 0,
-    version: "0.2.21"
+    version: "0.2.22"
   });
   for (const d of result.diagnostics) {
     const tag = d.level === "error" ? "ERROR" : d.level === "warning" ? "WARN " : "info ";

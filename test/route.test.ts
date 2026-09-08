@@ -409,7 +409,7 @@ n1 -> n2
 n3 -> n4
 n3 -.-> d1
 n2 -.-> d2
-n3 -.-> d2`);
+n3 -.-> d2`, { optimizePlacement: false });
     const n2 = r.geometry.nodes.find((n) => n.id === 'n2')!;
     const d1 = r.geometry.nodes.find((n) => n.id === 'd1')!;
     const up = r.geometry.edges.find((e) => e.from === 'n3' && e.to === 'd1')!;

@@ -10,10 +10,12 @@ import { genSource, mulberry32 } from './fuzz-gen.ts';
 describe('fuzz × oracle', () => {
   // Orientation only changes the physical axis used by each O-* check.
   for (const orientation of ['horizontal', 'vertical'] as const) {
-    it(`has zero oracle violations across 500 random cases (${orientation})`, () => {
+    it(`has zero oracle violations across 500 random cases (${orientation})`, async () => {
       const prefix = orientation === 'vertical' ? 'orientation vertical\n' : '';
       const failures: string[] = [];
       for (let seed = 1; seed <= 500; seed++) {
+        // Let the worker flush progress messages during this CPU-bound batch.
+        if (seed % 10 === 0) await new Promise<void>(resolve => setImmediate(resolve));
         const src = prefix + genSource(mulberry32(seed * 40503 + 7));
         try {
           const r = compile(src);

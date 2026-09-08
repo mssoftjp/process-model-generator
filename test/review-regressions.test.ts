@@ -2,22 +2,33 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import { compile, parse } from '../src/compile.ts';
 import { checkOracle } from '../src/oracle.ts';
 import { evaluateDelivery } from '../src/eval.ts';
 import { placeEdgeLabels } from '../src/edge-labels.ts';
+import { inspectNodeLabelRoutes } from '../src/node-labels.ts';
+import { rawHits } from '../src/route-intersections.ts';
+import { sharedPair } from '../src/oarsp.ts';
 
 const source = readFileSync(new URL('./fixtures/review-expense/expense-settlement.flow', import.meta.url), 'utf8');
 const ledger = readFileSync(new URL('./fixtures/review-expense/review.md', import.meta.url), 'utf8');
 
 describe('external expense review regressions', () => {
+  let delivered: ReturnType<typeof compile>;
+  beforeAll(() => { delivered = compile(source, { strict: true, version: 'test' }); }, 15000);
   it.each(['vertical', 'horizontal'])('reduces the fixed fixture without changing business edges (%s)', orientation => {
-    const r = compile(source.replace('orientation vertical', `orientation ${orientation}`), { strict: true });
-    expect(r.geometry.edges.reduce((n, e) => n + Math.max(0, e.points.length - 2), 0)).toBeLessThanOrEqual(45);
+    const r = compile(source.replace('orientation vertical', `orientation ${orientation}`), { strict: true, optimizePlacement: false });
+    // Text avoidance and distinct split ports may require more bends than the old unsafe 45-bend route.
+    expect(r.geometry.edges.reduce((n, e) => n + Math.max(0, e.points.length - 2), 0)).toBeLessThanOrEqual(48);
     expect(r.geometry.edges.reduce((n, e) => n + (e.hops?.length ?? 0), 0)).toBeLessThanOrEqual(6);
     if (orientation === 'vertical') expect([r.geometry.width, r.geometry.height]).toEqual([2140, 2528]);
     expect(checkOracle(r.normalized, r.geometry)).toEqual([]);
+    expect(inspectNodeLabelRoutes(r.geometry)).toEqual([]);
+    const inputs = r.geometry.edges.filter(e => e.to === 'review_supervisor');
+    expect(rawHits(inputs)).toEqual([]);
+    const outputs = r.geometry.edges.filter(e => e.from === 'parallel_processing');
+    expect(sharedPair(outputs[0]!, outputs[1]!)).toBe(0);
     const labels = placeEdgeLabels(r.geometry);
     expect(labels.nodeHits + labels.edgeHits + labels.labelHits).toBe(0);
     for (const edge of r.normalized.edges) {
@@ -27,10 +38,21 @@ describe('external expense review regressions', () => {
     expect(r.diagnostics.find(d => d.code === 'N-222')?.message).toContain('same-lane');
   });
 
+  it('re-evaluates placement without hiding global intersections or changing responsibility', () => {
+    const r = delivered;
+    expect(rawHits(r.geometry.edges).length).toBeLessThanOrEqual(1);
+    expect(inspectNodeLabelRoutes(r.geometry)).toEqual([]);
+    expect(checkOracle(r.normalized, r.geometry)).toEqual([]);
+    expect(r.geometry.width * r.geometry.height).toBeLessThanOrEqual(2140 * 2528 * 1.15);
+    for (const n of r.geometry.nodes) expect(n.lane).toBe(r.normalized.nodes.find(g => g.id === n.id)!.lane);
+    const hits = rawHits(r.geometry.edges);
+    expect(hits.some(h => h.a.includes('notify_supervisor_return') || h.b.includes('notify_supervisor_return'))).toBe(false);
+  });
+
   it.each(['unresolved', 'confirmed', 'outside'])('checks ledger backwards: %s', mode => {
     const dir = mkdtempSync(join(tmpdir(), 'review-regression-'));
     try {
-      const r = compile(source, { strict: true, version: 'test' });
+      const r = delivered;
       writeFileSync(join(dir, 'expense.flow'), source);
       writeFileSync(join(dir, 'expense.svg'), r.svg);
       let report = ledger.replace(/svg-sha256=[a-f0-9]+/u, `svg-sha256=${createHash('sha256').update(r.svg).digest('hex')}`);
@@ -41,7 +63,7 @@ describe('external expense review regressions', () => {
       if (mode === 'unresolved') expect(result.findings.some(d => d.code === 'E-520')).toBe(true);
       else expect(result.findings).toEqual([]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+  }, 15000);
 
   it('keeps display names, explicit conditions and return hints independent', () => {
     const named = parse(source).ir.edges.find(e => e.from === 'revise_application')!;

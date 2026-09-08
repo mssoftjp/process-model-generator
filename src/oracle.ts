@@ -18,9 +18,18 @@
 
 import { isAttachedBoundary, isEventKind, isGatewayKind } from './bpmn.ts';
 import { buildPoolIndex } from './pools.ts';
+import { inspectNodeLabelRoutes } from './node-labels.ts';
 import type { Diagnostic, EdgeGeom, Geometry, NodeGeom, NormGraph, Pt } from './types.ts';
 
 const EPS = 0.5;
+
+/** Separate visual check: unlike body endpoints, own external text is never exempt. */
+export function checkNodeLabelRoutes(geometry: Geometry): Diagnostic[] {
+  return inspectNodeLabelRoutes(geometry).map(hit => ({
+    level: 'warning', code: 'W-436',
+    message: `辺 ${hit.edgeId} が外部ラベル ${hit.nodeId} を横切る (segment=${hit.segment}, x=${hit.point.x}, y=${hit.point.y})`,
+  }));
+}
 
 export function checkOracle(g: NormGraph, geo: Geometry): Diagnostic[] {
   const out: Diagnostic[] = [];

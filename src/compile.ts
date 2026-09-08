@@ -7,20 +7,22 @@ import { crossMinusLabelEvents } from './message-labels.ts';
 import { parse } from './parse.ts';
 import { normalize } from './normalize.ts';
 import { measureNodes } from './measure.ts';
-import { place } from './place.ts';
+import { localPlacementCandidates, place } from './place.ts';
 import { route } from './route.ts';
 import { computeCoords, PAD, TITLE_H, transposeCells, VERT_GUTTER_LABEL_NEED } from './coords.ts';
 import { EDGE_FONT_SIZE, measureText, TITLE_FONT_SIZE } from './metrics.ts';
 import { computeHops, wire } from './wire.ts';
 import { placeEdgeLabels } from './edge-labels.ts';
-import { checkOracle } from './oracle.ts';
+import { checkNodeLabelRoutes, checkOracle } from './oracle.ts';
 import { diagnosePageBudget } from './page-budget.ts';
 import { improveRouting } from './sift-order.ts';
 import { localSequenceCandidates } from './route/local-candidates.ts';
-import { improveDataAssociations, sharedPair, visualAppearancePenalty } from './oarsp.ts';
+import { inspectNodeLabelRoutes } from './node-labels.ts';
+import { rawHits } from './route-intersections.ts';
+import { connectedRouteCandidates, improveDataAssociations, sharedPair, visualAppearancePenalty } from './oarsp.ts';
 import { renderSvg } from './svg.ts';
 import { isDocLike } from './types.ts';
-import type { CompileOptions, CompileResult, Diagnostic, Geometry, Orientation, RoutePlan } from './types.ts';
+import type { CompileOptions, CompileResult, Diagnostic, Geometry, Orientation, Placement, RoutePlan } from './types.ts';
 
 export class CompileError extends Error {
   constructor(public diagnostics: Diagnostic[]) {
@@ -58,7 +60,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   // 縦図: P2/P3 は論理軸のまま使い(向き不変)、P4 へ渡すセルとラベル余白だけ論理軸へ写す
   const cellsL = vertical ? transposeCells(cells) : cells;
   const titleShift = vertical && normalized.title ? TITLE_H : 0;
-  const assemble = (plan: RoutePlan) => {
+  const assemble = (plan: RoutePlan, candidatePlacement = placement) => {
     const planL = vertical
       ? {
         ...plan,
@@ -67,7 +69,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
         ),
       }
       : plan;
-    const coords = computeCoords(normalized, placement, cellsL, planL, !vertical); // P4(論理軸)
+    const coords = computeCoords(normalized, candidatePlacement, cellsL, planL, !vertical); // P4(論理軸)
     const edges = wire(normalized, planL, coords, orientation, titleShift); // P5(実座標)
     const nodes = normalized.nodes.map((n) => {
       const lg = coords.nodeGeom.get(n.id)!;
@@ -111,47 +113,109 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
     name, assembled, geometry: assembled.geometry,
     violations: checkOracle(normalized, assembled.geometry), labelReport: assembled.labelReport,
   });
-  const adopted = new Set<string>();
-  let selected = candidateOf('baseline', assemble(route(normalized, placement, false)));
-  const consider = (candidate: Candidate) => {
-    if (compareScore(layoutScore(candidate), layoutScore(selected)) < 0) {
-      selected = candidate;
-      adopted.add(candidate.name);
+  const solvePlacement = (candidatePlacement: Placement) => {
+    const materialize = (plan: RoutePlan) => assemble(plan, candidatePlacement);
+    const adopted = new Set<string>();
+    let selected = candidateOf('baseline', materialize(route(normalized, candidatePlacement, false)));
+    const consider = (candidate: Candidate) => {
+      if (inspectNodeLabelRoutes(candidate.geometry).length > inspectNodeLabelRoutes(selected.geometry).length) return;
+      if (compareScore(layoutScore(candidate), layoutScore(selected)) < 0) {
+        selected = candidate;
+        adopted.add(candidate.name);
+      }
+    };
+    consider(candidateOf('improved', materialize(route(normalized, candidatePlacement, true))));
+    const readability = adopted.has('improved');
+    const refinedAssembled = improveRouting(normalized, candidatePlacement, readability, materialize, selected.assembled);
+    if (refinedAssembled.geometry.edges !== selected.geometry.edges) consider(candidateOf('refined', refinedAssembled));
+    const oarspGeometry = improveDataAssociations(selected.geometry);
+    if (oarspGeometry !== selected.geometry) {
+      computeHops(oarspGeometry.edges);
+      const labelReport = placeEdgeLabels(oarspGeometry);
+      consider(candidateOf('oarsp', { ...selected.assembled, geometry: oarspGeometry, labelReport }));
     }
+    {
+      const before = selected;
+      for (const connected of connectedRouteCandidates(before.geometry)) {
+        // Carry forward already adopted changes in independent groups. Every merged
+        // world is checked again; old reservations and collisions are never assumed safe.
+        const geometry = { ...connected, edges: connected.edges.map((e, i) =>
+          e.points === before.geometry.edges[i]!.points ? { ...selected.geometry.edges[i]!, hops: undefined } : e) };
+        if (rawHits(geometry.edges).length > rawHits(selected.geometry.edges).length) continue;
+        if (checkOracle(normalized, geometry).length > 0) continue;
+        if (geometry.edges.some((a, i) => geometry.edges.slice(i + 1).some((b, j) =>
+          sharedPair(a, b) > sharedPair(before.geometry.edges[i]!, before.geometry.edges[i + 1 + j]!) + 0.01))) continue;
+        computeHops(geometry.edges);
+        const labelReport = placeEdgeLabels(geometry);
+        if (labelReport.nodeHits > selected.labelReport.nodeHits ||
+            labelReport.edgeHits > selected.labelReport.edgeHits ||
+            labelReport.labelHits > selected.labelReport.labelHits ||
+            labelReport.stolen > selected.labelReport.stolen ||
+            labelReport.ambiguous > selected.labelReport.ambiguous) continue;
+        consider(candidateOf('connected-routes', { ...selected.assembled, geometry, labelReport }));
+      }
+    }
+    // Bounded sweeps let port ordering and independent shortcuts improve one another.
+    for (let sweep = 0; sweep < 4; sweep++) {
+      const before = selected;
+      for (const geometry of localSequenceCandidates(before.geometry)) {
+        const introducesSharing = geometry.edges.some((a, i) => geometry.edges.slice(i + 1).some((b, j) =>
+          sharedPair(a, b) > sharedPair(before.geometry.edges[i]!, before.geometry.edges[i + 1 + j]!) + 0.01));
+        if (introducesSharing) continue;
+        const violations = checkOracle(normalized, geometry);
+        if (violations.length > 0) continue;
+        computeHops(geometry.edges);
+        const labelReport = placeEdgeLabels(geometry);
+        if (labelReport.nodeHits > selected.labelReport.nodeHits ||
+            labelReport.edgeHits > selected.labelReport.edgeHits ||
+            labelReport.labelHits > selected.labelReport.labelHits ||
+            labelReport.stolen > selected.labelReport.stolen ||
+            labelReport.ambiguous > selected.labelReport.ambiguous) continue;
+        consider(candidateOf('local-sequence', { ...selected.assembled, geometry, labelReport }));
+      }
+      if (before === selected) break;
+    }
+
+    return { selected, adopted, placement: candidatePlacement };
   };
-  consider(candidateOf('improved', assemble(route(normalized, placement, true))));
-  const readability = adopted.has('improved');
-  const refinedAssembled = improveRouting(normalized, placement, readability, assemble, selected.assembled);
-  if (refinedAssembled.geometry.edges !== selected.geometry.edges) consider(candidateOf('refined', refinedAssembled));
-  const oarspGeometry = improveDataAssociations(selected.geometry);
-  if (oarspGeometry !== selected.geometry) {
-    computeHops(oarspGeometry.edges);
-    const labelReport = placeEdgeLabels(oarspGeometry);
-    consider(candidateOf('oarsp', { ...selected.assembled, geometry: oarspGeometry, labelReport }));
-  }
-  // Bounded sweeps let port ordering and independent shortcuts improve one another.
-  for (let sweep = 0; sweep < 4; sweep++) {
-    const before = selected;
-    for (const geometry of localSequenceCandidates(before.geometry)) {
-      const introducesSharing = geometry.edges.some((a, i) => geometry.edges.slice(i + 1).some((b, j) =>
-        sharedPair(a, b) > sharedPair(before.geometry.edges[i]!, before.geometry.edges[i + 1 + j]!) + 0.01));
-      if (introducesSharing) continue;
-      const violations = checkOracle(normalized, geometry);
-      if (violations.length > 0) continue;
-      computeHops(geometry.edges);
-      const labelReport = placeEdgeLabels(geometry);
-      if (labelReport.nodeHits > selected.labelReport.nodeHits ||
-          labelReport.edgeHits > selected.labelReport.edgeHits ||
-          labelReport.labelHits > selected.labelReport.labelHits) continue;
-      consider(candidateOf('local-sequence', { ...selected.assembled, geometry, labelReport }));
+  let solution = solvePlacement(placement);
+  if (opts.optimizePlacement !== false) {
+    const original = solution;
+    for (const proposed of localPlacementCandidates(normalized, original.placement, original.selected.geometry)) {
+      const candidatePlacement = { ...proposed, row: new Map(proposed.row) };
+      for (const [id, row] of original.placement.row) {
+        if (proposed.row.get(id) === row) candidatePlacement.row.set(id, solution.placement.row.get(id)!);
+      }
+      const candidate = solvePlacement(candidatePlacement);
+      const old = solution.selected, next = candidate.selected;
+      // A placement change must remove actual crossings globally, not move them.
+      if (rawHits(next.geometry.edges).length >= rawHits(old.geometry.edges).length ||
+          inspectNodeLabelRoutes(next.geometry).length > inspectNodeLabelRoutes(old.geometry).length ||
+          next.labelReport.nodeHits > old.labelReport.nodeHits ||
+          next.labelReport.edgeHits > old.labelReport.edgeHits ||
+          next.labelReport.labelHits > old.labelReport.labelHits ||
+          next.labelReport.stolen > old.labelReport.stolen ||
+          next.labelReport.ambiguous > old.labelReport.ambiguous ||
+          next.geometry.edges.some((a, i) => next.geometry.edges.slice(i + 1).some((b, j) =>
+            sharedPair(a, b) > sharedPair(old.geometry.edges[i]!, old.geometry.edges[i + 1 + j]!) + 0.01)) ||
+          next.geometry.width * next.geometry.height > old.geometry.width * old.geometry.height * 1.15) continue;
+      if (compareScore(layoutScore(next), layoutScore(old)) < 0) solution = candidate;
     }
-    if (before === selected) break;
+    if (solution !== original) solution.adopted.add('local-placement');
   }
+  const { selected, adopted } = solution;
   const geometry = selected.geometry;
+  if (adopted.has('local-placement')) {
+    diags.push({ level: 'info', code: 'N-438', message: '残存交差の周辺配置を再評価し、通路・ポート・ラベルを再生成' });
+  }
   if (adopted.has('local-sequence')) {
     diags.push({ level: 'info', code: 'N-435', message: '全図検査により合流ポート交換・シーケンス短絡候補を採用' });
   }
+  if (adopted.has('connected-routes')) {
+    diags.push({ level: 'info', code: 'N-437', message: '全図検査により混在入線・分岐出線の接続面と経路を共同最適化' });
+  }
   const edges = geometry.edges;
+  diags.push(...checkNodeLabelRoutes(geometry));
   if (adopted.has('improved')) {
     diags.push({ level: 'info', code: 'N-431', message: '全体可読性スコアにより改善経路を採用' });
   }
@@ -169,7 +233,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   for (const e of normalized.edges) {
     if (e.fromPool || e.toPool || poolOfNode(e.from) !== poolOfNode(e.to)) continue;
     if (isDocLike(kindOf.get(e.from) ?? 'task') || isDocLike(kindOf.get(e.to) ?? 'task')) continue;
-    if (e.isReturn && placement.col.get(e.to)! >= placement.col.get(e.from)!) {
+    if (e.isReturn && solution.placement.col.get(e.to)! >= solution.placement.col.get(e.from)!) {
       diags.push({
         level: strict ? 'error' : 'warning', code: 'W-252',
         message: `戻り辺 ${e.from} -> ${e.to} が時間軸の順方向に配置された（エンジン不変条件の破れの疑い）`,
@@ -220,7 +284,7 @@ export function compile(source: string, opts: CompileOptions = {}): CompileResul
   };
 }
 
-/** オラクル違反 → gateway 出口共有 → ラベル衝突 → 交差 → 所有/距離 → 外観 → 折れ → 総線長 → 面積。 */
+/** 図形違反 → 外部文字/辺ラベル衝突 → gateway 出口共有 → 幾何交差 → 所有/距離 → 外観。 */
 function layoutScore(candidate: {
   geometry: Geometry;
   violations: Diagnostic[];
@@ -228,6 +292,7 @@ function layoutScore(candidate: {
 }): number[] {
   const { geometry, violations, labelReport } = candidate;
   let sharedGatewayExits = 0;
+  let sharedGatewayLength = 0;
   let hops = 0;
   let bends = 0;
   let length = 0;
@@ -251,15 +316,20 @@ function layoutScore(candidate: {
     if (n.kind !== 'xor' && n.kind !== 'and') continue; // ゲートウェイ出口共有の可読性スコア
     const outs = geometry.edges.filter((e) => e.from === n.id && e.kind === 'seq');
     if (outs.length !== 2) continue;
-    if (outs[0]!.points[0]!.x === outs[1]!.points[0]!.x && outs[0]!.points[0]!.y === outs[1]!.points[0]!.y) {
-      sharedGatewayExits++;
+    for (let i = 0; i < outs.length; i++) for (const other of outs.slice(i + 1)) {
+      const edge = outs[i]!;
+      sharedGatewayLength += sharedPair(edge, other);
+      if (edge.points[0]!.x === other.points[0]!.x && edge.points[0]!.y === other.points[0]!.y) sharedGatewayExits++;
     }
   }
   return [
     violations.filter((d) => d.level === 'error').length,
-    sharedGatewayExits,
+    inspectNodeLabelRoutes(geometry).length,
     labelReport.nodeHits,
     labelReport.edgeHits + labelReport.labelHits,
+    sharedGatewayExits,
+    sharedGatewayLength,
+    rawHits(geometry.edges).length,
     hops,
     labelReport.stolen,
     labelReport.ambiguous,
